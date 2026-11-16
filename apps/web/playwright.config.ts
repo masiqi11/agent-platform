@@ -7,7 +7,14 @@ export default defineConfig({
   fullyParallel: false,
   workers: 1,
   reporter: [["list"]],
-  use: { baseURL: `http://127.0.0.1:${port}`, trace: "retain-on-failure", locale: "zh-CN", timezoneId: "Asia/Shanghai" },
+  use: {
+    baseURL: `http://127.0.0.1:${port}`,
+    trace: "retain-on-failure",
+    locale: "zh-CN",
+    timezoneId: "Asia/Shanghai",
+    // Optional: use a preinstalled Chromium instead of the version Playwright downloads.
+    ...(process.env.PW_CHROMIUM_PATH ? { launchOptions: { executablePath: process.env.PW_CHROMIUM_PATH } } : {}),
+  },
   projects: [{ name: "chromium", use: { ...devices["Desktop Chrome"], viewport: { width: 1440, height: 900 } } }],
   webServer: {
     command: "bun src/cli/e2e-server.ts",

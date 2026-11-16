@@ -4,6 +4,7 @@ import { ArrowLeft, Bot, Check, CircleDashed, GitMerge, MessageSquare, Minus, Sh
 import { useState } from "react";
 import { toast } from "sonner";
 import { PrincipalAvatar } from "@/components/agent-avatar";
+import { CodePanel } from "@/components/code-panel";
 import { Markdown } from "@/components/markdown";
 import { ErrorState, PageSkeleton } from "@/components/states";
 import { NEEDS_INPUT, PriorityPill, runTransition, StatusPill, TransitionDialog, transitionErrorText } from "@/components/task-bits";
@@ -115,6 +116,7 @@ export function TaskPage({ projectId, taskId }: { projectId: string; taskId: str
             {t.description ? <Markdown text={t.description} /> : <p className="text-sm text-muted-foreground italic">暂无描述</p>}
           </section>
           <Criteria task={t} />
+          <CodePanel task={t} />
           <Timeline taskId={t.id} />
           <Comments taskId={t.id} />
         </div>
@@ -225,6 +227,15 @@ const EVENT_LABEL: Record<string, string> = {
   "approval.invalidated": "审批因新提交失效",
   "approval.expired": "审批已超时",
   "escalation.raised": "触发升级",
+  "wake.requested": "唤醒了负责 Agent",
+  "workspace.created": "创建了工作区",
+  "workspace.released": "回收了工作区",
+  "commit.pushed": "推送了提交",
+  "mr.opened": "创建了 MR",
+  "pipeline.completed": "CI 运行结束",
+  "issue.synced": "同步了 Issue",
+  "task.takeover": "接管 / 交还了任务",
+  "session.cancelled": "结束了 Agent 会话",
 };
 
 function Timeline({ taskId }: { taskId: string }) {

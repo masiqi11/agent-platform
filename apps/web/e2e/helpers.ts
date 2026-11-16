@@ -1,4 +1,6 @@
 import { execFileSync } from "node:child_process";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { expect, type Page } from "@playwright/test";
 
 export const SHOTS = "../../screenshots";
@@ -42,4 +44,14 @@ export function seedDemo() {
   const u = new URL(base);
   u.pathname = `/${process.env.E2E_DB ?? "agent_platform_e2e"}`;
   execFileSync("bun", ["src/cli/seed-demo.ts", "--owner", "owner@xinghe.test"], { cwd: "../server", env: { ...process.env, DATABASE_URL: u.toString(), SEED_PASSWORD: PW }, stdio: "inherit" });
+}
+
+/** Seeds the S5 demo projects (PAY / BILL with local repos and dev/reviewer/tester agents). */
+export function seedS5() {
+  const base = process.env.TEST_DATABASE_URL;
+  if (!base) throw new Error("TEST_DATABASE_URL is required");
+  const u = new URL(base);
+  u.pathname = `/${process.env.E2E_DB ?? "agent_platform_e2e"}`;
+  const DATA_DIR = process.env.E2E_DATA_DIR ?? join(tmpdir(), "ap-e2e-data");
+  execFileSync("bun", ["src/cli/seed.ts", "--owner", "owner@xinghe.test"], { cwd: "../server", env: { ...process.env, DATABASE_URL: u.toString(), SEED_PASSWORD: PW, DATA_DIR }, stdio: "inherit" });
 }

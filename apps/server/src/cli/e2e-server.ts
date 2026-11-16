@@ -2,6 +2,9 @@
  * Starts a throwaway server for Playwright: recreates the e2e database, then runs the app
  * (serving apps/web/dist) on E2E_PORT. Uses TEST_DATABASE_URL's server; no secrets printed.
  */
+import { rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import pg from "pg";
 
 const base = process.env.TEST_DATABASE_URL;
@@ -15,6 +18,9 @@ await admin.end();
 const u = new URL(base);
 u.pathname = `/${name}`;
 const port = process.env.E2E_PORT ?? "3100";
+// Throwaway data dir (local repos, workspaces, artifacts); the seed helper uses the same path.
+const dataDir = process.env.E2E_DATA_DIR ?? join(tmpdir(), "ap-e2e-data");
+rmSync(dataDir, { recursive: true, force: true });
 const p = Bun.spawn(["bun", "src/main.ts"], {
   cwd: ".",
   stdout: "inherit",
@@ -25,6 +31,8 @@ const p = Bun.spawn(["bun", "src/main.ts"], {
     PORT: port,
     PUBLIC_URL: `http://127.0.0.1:${port}`,
     LOG_LEVEL: "warn",
+    DATA_DIR: dataDir,
+    SANDBOX: "process",
     AUTH_SIGNUP_MODE: "invite",
     ...(process.env.E2E_EXTRA ? JSON.parse(process.env.E2E_EXTRA) : {}),
   },

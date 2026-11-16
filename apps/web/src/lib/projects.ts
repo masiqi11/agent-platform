@@ -34,11 +34,18 @@ export function useProjectLive(projectId: string) {
         void queryClient.invalidateQueries({ queryKey: qk.projectMembers(projectId) });
         void queryClient.invalidateQueries({ queryKey: qk.agents(projectId) });
       }
+      // S5: code-path events refresh the task's code panel and the agent load.
+      if (["workspace.created", "workspace.released", "commit.pushed", "mr.opened", "pipeline.completed", "wake.requested", "issue.synced", "session.cancelled"].includes(t)) {
+        const taskId = (f.event.payload as { taskId?: unknown }).taskId;
+        if (typeof taskId === "string") for (const k of ["task-code", "task", "task-timeline"]) void queryClient.invalidateQueries({ queryKey: [k, taskId] });
+        void queryClient.invalidateQueries({ queryKey: ["agent-load", projectId] });
+      }
+      if (t === "repo.bound" || t === "repo.credential_invalid") void queryClient.invalidateQueries({ queryKey: ["repos", projectId] });
       if (t.startsWith("task.") || t.startsWith("approval.") || t.startsWith("proposal.")) {
         void queryClient.invalidateQueries({ queryKey: ["tasks", projectId] });
         const taskId = (f.event.payload as { taskId?: unknown }).taskId;
         if (typeof taskId === "string") {
-          for (const k of ["task", "task-timeline", "task-comments", "task-approvals"]) void queryClient.invalidateQueries({ queryKey: [k, taskId] });
+          for (const k of ["task", "task-timeline", "task-comments", "task-approvals", "task-code"]) void queryClient.invalidateQueries({ queryKey: [k, taskId] });
         }
         if (t.startsWith("proposal.")) {
           void queryClient.invalidateQueries({ queryKey: ["proposals", projectId] });

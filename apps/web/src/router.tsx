@@ -19,6 +19,8 @@ const BoardPage = lazy(() => import("@/pages/board").then((m) => ({ default: m.B
 const TaskPage = lazy(() => import("@/pages/task").then((m) => ({ default: m.TaskPage })));
 const ModelsPage = lazy(() => import("@/pages/models").then((m) => ({ default: m.ModelsPage })));
 const SessionsPage = lazy(() => import("@/pages/sessions").then((m) => ({ default: m.SessionsPage })));
+const ReposPage = lazy(() => import("@/pages/repos").then((m) => ({ default: m.ReposPage })));
+const SystemPage = lazy(() => import("@/pages/system").then((m) => ({ default: m.SystemPage })));
 const AuditPage = lazy(() => import("@/pages/audit").then((m) => ({ default: m.AuditPage })));
 
 const rootRoute = createRootRoute({ component: () => <Outlet />, notFoundComponent: () => <NotFoundState /> });
@@ -63,6 +65,7 @@ const inboxRoute = createRoute({ getParentRoute: () => appRoute, path: "/inbox",
 const usersRoute = createRoute({ getParentRoute: () => appRoute, path: "/admin/users", component: UsersPage });
 const auditRoute = createRoute({ getParentRoute: () => appRoute, path: "/audit", component: AuditPage });
 const modelsRoute = createRoute({ getParentRoute: () => appRoute, path: "/admin/models", component: ModelsPage });
+const systemRoute = createRoute({ getParentRoute: () => appRoute, path: "/admin/system", component: SystemPage });
 
 const projectRoute = createRoute({ getParentRoute: () => appRoute, path: "/projects/$projectId" });
 const projectHomeRoute = createRoute({
@@ -127,12 +130,29 @@ const sessionsRoute = createRoute({
   },
 });
 
+const reposRoute = createRoute({
+  getParentRoute: () => projectRoute,
+  path: "/repos",
+  component: function Repos() {
+    const { projectId } = reposRoute.useParams();
+    return <ReposPage projectId={projectId} />;
+  },
+});
+
 const routeTree = rootRoute.addChildren([
   loginRoute,
   setupRoute,
   inviteRoute,
   resetRoute,
-  appRoute.addChildren([homeRoute, inboxRoute, usersRoute, auditRoute, modelsRoute, projectRoute.addChildren([projectHomeRoute, chatRoute, agentsRoute, boardRoute, taskRoute, sessionsRoute])]),
+  appRoute.addChildren([
+    homeRoute,
+    inboxRoute,
+    usersRoute,
+    auditRoute,
+    modelsRoute,
+    systemRoute,
+    projectRoute.addChildren([projectHomeRoute, chatRoute, agentsRoute, boardRoute, taskRoute, sessionsRoute, reposRoute]),
+  ]),
 ]);
 
 export const router = createRouter({ routeTree, defaultPreload: "intent", defaultPendingComponent: () => <PageSkeleton />, context: {} });

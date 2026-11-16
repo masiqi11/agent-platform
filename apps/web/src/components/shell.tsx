@@ -1,6 +1,8 @@
 import { Link, useNavigate, useRouterState } from "@tanstack/react-router";
 import {
+  Activity,
   Cpu,
+  GitFork,
   History,
   Bot,
   ChevronsLeft,
@@ -123,6 +125,7 @@ function ActiveProject({ id, name, pkey, collapsed, path }: { id: string; name: 
     { to: `/projects/${id}/board`, label: "看板" as MsgKey, icon: KanbanSquare, raw: true },
     { to: `/projects/${id}/agents`, label: "Agent" as MsgKey, icon: Bot, raw: true },
     { to: `/projects/${id}/sessions`, label: "会话" as MsgKey, icon: History, raw: true },
+    { to: `/projects/${id}/repos`, label: "仓库" as MsgKey, icon: GitFork, raw: true },
   ];
   return (
     <div className="py-0.5">
@@ -147,6 +150,7 @@ export function Sidebar({ collapsed, onToggle, onSearch, extra }: { collapsed: b
   const admin: NavItem[] = [];
   if (isAdmin(me)) admin.push({ to: "/admin/users", label: "nav.users", icon: Users });
   if (isAdmin(me)) admin.push({ to: "/admin/models", label: "模型与预算" as MsgKey, icon: Cpu, raw: true });
+  if (isAdmin(me)) admin.push({ to: "/admin/system", label: "系统状态" as MsgKey, icon: Activity, raw: true });
   if (canAudit(me)) admin.push({ to: "/audit", label: "nav.audit", icon: ScrollText });
   return (
     <aside className={cn("flex h-dvh shrink-0 flex-col border-r bg-sidebar px-2.5 py-3 transition-[width]", collapsed ? "w-14" : "w-60")} aria-label="主导航">

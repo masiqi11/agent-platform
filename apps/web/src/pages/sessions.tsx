@@ -122,6 +122,8 @@ function SessionDetail({ id }: { id: string }) {
   );
 }
 
+const SCOPE_LABEL: Record<string, string> = { resident: "常驻", task: "任务", thread: "线程", one_shot: "一次性（摘要）" };
+
 export function SessionsPage({ projectId }: { projectId: string }) {
   const q = useSessions(projectId);
   const [sel, setSel] = useState<string | null>(null);
@@ -152,7 +154,7 @@ export function SessionsPage({ projectId }: { projectId: string }) {
                       {s.agentName} <span className="text-[11px] font-normal text-muted-foreground">{AGENT_ROLE_LABEL[s.role] ?? s.role}</span>
                     </p>
                     <p className="truncate text-[11px] text-muted-foreground">
-                      {s.scopeType === "one_shot" ? "一次性（摘要）" : "常驻"} · {s.steps} 步 · {relativeTime(s.updatedAt)}
+                      {SCOPE_LABEL[s.scopeType] ?? s.scopeType} · {s.steps} 步 · {relativeTime(s.updatedAt)}
                     </p>
                   </div>
                   <span className={cn("rounded-full px-1.5 py-px text-[10px]", STATUS[s.status]?.cls)}>{STATUS[s.status]?.label ?? s.status}</span>
