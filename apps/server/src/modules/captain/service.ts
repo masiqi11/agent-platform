@@ -20,7 +20,7 @@ import { RetryLater, type createJobs } from "../../core/jobs";
 import { log } from "../../core/logger";
 import type { Config } from "../../config";
 import type { Database } from "../../db";
-import { agent, chatGroup, decision, message, principal, project, question, summary, task } from "../../db/schema";
+import { agent, artifact, chatGroup, decision, mergeQueueItem, message, principal, project, question, releaseRecord, summary, task, testRun, workspace } from "../../db/schema";
 import type { Chat } from "../chat/service";
 import type { Identity } from "../identity/service";
 import type { Inbox } from "../inbox/service";
@@ -1030,6 +1030,76 @@ export function createCaptain(d: CaptainDeps) {
     }
   }
 
+  /* ───────────── completion summary (main scenario step 9, FR-CAP) ───────────── */
+
+  /**
+   * After the merge queue finishes a task, the project captain posts a completion summary in the
+   * task's group: what was merged, the test evidence, per-criterion verdicts and the release record.
+   * Built from records only (no model call), so it cannot invent evidence (TRAP-15).
+   */
+  async function completionSummary(ctx: Ctx, taskId: string) {
+    const [t] = await db.root.select().from(task).where(eq(task.id, taskId));
+    if (!t) return null;
+    const [pr] = await db.root.select().from(project).where(eq(project.id, t.projectId));
+    const groupId =
+      t.groupId ??
+      (
+        await db.root
+          .select({ id: chatGroup.id })
+          .from(chatGroup)
+          .where(and(eq(chatGroup.projectId, t.projectId), eq(chatGroup.kind, "main")))
+      )[0]?.id;
+    if (!groupId || !pr) return null;
+    const [dup] = await db.root
+      .select({ id: message.id })
+      .from(message)
+      .where(and(eq(message.groupId, groupId), eq(message.kind, "summary_card"), sql`${message.blocks}->'completion'->>'taskId' = ${taskId}`))
+      .limit(1);
+    if (dup) return dup.id; // idempotent
+    const [ws] = await db.root.select().from(workspace).where(eq(workspace.taskId, taskId)).orderBy(desc(workspace.createdAt)).limit(1);
+    const [mq] = await db.root.select().from(mergeQueueItem).where(eq(mergeQueueItem.taskId, taskId));
+    const [rel] = await db.root.select().from(releaseRecord).where(eq(releaseRecord.taskId, taskId));
+    const [tr] = rel?.testRunId ? await db.root.select().from(testRun).where(eq(testRun.id, rel.testRunId)) : [];
+    const [logArt] = tr?.logArtifactId ? await db.root.select({ id: artifact.id, name: artifact.name }).from(artifact).where(eq(artifact.id, tr.logArtifactId)) : [];
+    const ref = `${pr.key}-${t.number}`;
+    const met = t.acceptanceCriteria.filter((c) => c.verdict === "met").length;
+    const verdictText = { met: "满足", unmet: "未满足", na: "不适用" } as Record<string, string>;
+    const lines = [
+      `【完成】${ref} ${t.title}`,
+      `- MR：${ws?.mrRef ?? "（无）"} 已由合并队列合并${mq?.mergeSha ? `（${mq.mergeSha.slice(0, 8)}）` : ""}`,
+      `- 测试：${tr ? `${tr.status === "passed" ? "通过" : tr.status}（第 ${tr.attempt} 次${logArt ? `，日志 ${logArt.name}` : ""}）` : "（无记录）"}`,
+      `- 验收标准：${met}/${t.acceptanceCriteria.length} 满足`,
+      ...t.acceptanceCriteria.map((c) => `  - ${c.text}：${verdictText[c.verdict ?? ""] ?? "未标记"}`),
+      `- 发布记录：${rel ? rel.id : "（无）"}`,
+    ];
+    const g = await loadGroup(groupId);
+    const cap = await captainFor(g);
+    const actx = cap ? await d.runtime.agentCtx(cap, (await d.runtime.getOrCreateSession(ctx.tenantId, cap, "resident", g.id, null)).id, ctx.traceId) : ctx;
+    const r = await sendAs(actx, {
+      groupId,
+      kind: "summary_card",
+      source: cap ? undefined : "system",
+      body: lines.join("\n"),
+      blocks: {
+        title: `${ref} 已完成`,
+        completion: {
+          taskId,
+          ref,
+          title: t.title,
+          mrRef: ws?.mrRef ?? null,
+          mrUrl: ws?.mrUrl ?? null,
+          mergeSha: mq?.mergeSha ?? null,
+          testStatus: tr?.status ?? null,
+          testAttempt: tr?.attempt ?? null,
+          logArtifact: logArt?.name ?? null,
+          criteria: t.acceptanceCriteria.map((c) => ({ text: c.text, verdict: c.verdict ?? null })),
+          releaseId: rel?.id ?? null,
+        },
+      },
+    });
+    return (r as { message?: { id: string } }).message?.id ?? null;
+  }
+
   /* ───────────── sweeps ───────────── */
 
   async function sweep() {
@@ -1134,6 +1204,6 @@ export function createCaptain(d: CaptainDeps) {
     };
   }
 
-  return { consumer, turn, summarize, sweep, getSummary, refreshSummary, correctSummary, listDecisions, decide, askQuestion, answerQuestion, listQuestions, afterAccept, askGlobal };
+  return { completionSummary, consumer, turn, summarize, sweep, getSummary, refreshSummary, correctSummary, listDecisions, decide, askQuestion, answerQuestion, listQuestions, afterAccept, askGlobal };
 }
 export type Captain = ReturnType<typeof createCaptain>;

@@ -32,6 +32,7 @@ export function createRealtime(d: { db: Database; identity: Identity }) {
   const rings = new Map<string, Ring>();
   let startSeq = 0;
   let listener: pg.Client | null = null;
+  let streamChain: Promise<unknown> = Promise.resolve();
 
   async function canSubscribe(ctx: Ctx, topic: string): Promise<boolean> {
     const [kind, id] = topic.split(":");
@@ -154,7 +155,11 @@ export function createRealtime(d: { db: Database; identity: Identity }) {
     /** Streaming deltas (LLM-12) — experience only, not events. */
     async publishStream(topic: string, messageId: string, delta: string, done = false) {
       const payload = JSON.stringify({ type: "stream", topic, messageId, delta: delta.slice(0, 3000), done } satisfies WsServerFrame);
-      await listener?.query("select pg_notify('ap_stream', $1)", [payload]).catch(() => {});
+      // Deltas arrive faster than NOTIFY round-trips (onDelta is fire-and-forget); one query at a time on
+      // the shared LISTEN client keeps order and avoids overlapping queries on a single pg client.
+      const next = streamChain.then(() => listener?.query("select pg_notify('ap_stream', $1)", [payload])).catch(() => undefined);
+      streamChain = next;
+      await next;
     },
     open(c: Conn) {
       conns.set(c.id, c);

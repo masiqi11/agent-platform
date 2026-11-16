@@ -5,6 +5,7 @@ import { useState } from "react";
 import { toast } from "sonner";
 import { PrincipalAvatar } from "@/components/agent-avatar";
 import { CodePanel } from "@/components/code-panel";
+import { MergeGatePanel, ReviewsSection, TestsSection } from "@/components/quality-panel";
 import { Markdown } from "@/components/markdown";
 import { ErrorState, PageSkeleton } from "@/components/states";
 import { NEEDS_INPUT, PriorityPill, runTransition, StatusPill, TransitionDialog, transitionErrorText } from "@/components/task-bits";
@@ -31,6 +32,7 @@ const GATES: { key: keyof TaskDetail["facts"]; label: string }[] = [
   { key: "ciPassed", label: "CI 通过" },
   { key: "evidenceComplete", label: "证据齐全" },
   { key: "reviewApproved", label: "评审通过" },
+  { key: "humanReviewApproved", label: "人类评审（改动范围要求）" },
   { key: "testPlanExists", label: "测试计划" },
   { key: "testPassed", label: "测试通过" },
   { key: "mergeApproved", label: "合并审批" },
@@ -117,6 +119,8 @@ export function TaskPage({ projectId, taskId }: { projectId: string; taskId: str
           </section>
           <Criteria task={t} />
           <CodePanel task={t} />
+          <ReviewsSection task={t} />
+          <TestsSection task={t} />
           <Timeline taskId={t.id} />
           <Comments taskId={t.id} />
         </div>
@@ -126,7 +130,7 @@ export function TaskPage({ projectId, taskId }: { projectId: string; taskId: str
               <ShieldCheck className="size-4" /> 门禁清单
             </h2>
             <ul className="space-y-1.5 text-sm">
-              {GATES.filter((g) => g.key !== "mergeApproved" || t.facts.mergeApprovalRequired).map((g) => {
+              {GATES.filter((g) => (g.key !== "mergeApproved" || t.facts.mergeApprovalRequired) && (g.key !== "humanReviewApproved" || t.facts.humanReviewRequired)).map((g) => {
                 const ok = Boolean(t.facts[g.key]);
                 return (
                   <li key={g.key} className="flex items-center gap-2">
@@ -138,6 +142,7 @@ export function TaskPage({ projectId, taskId }: { projectId: string; taskId: str
               {t.facts.openBlockers > 0 && <li className="text-danger">还有 {t.facts.openBlockers} 个未解决的阻塞</li>}
             </ul>
           </section>
+          <MergeGatePanel task={t} />
           <People task={t} />
           <Approvals task={t} />
           {t.sourceMessageIds.length > 0 && t.groupId && (
@@ -236,6 +241,13 @@ const EVENT_LABEL: Record<string, string> = {
   "issue.synced": "同步了 Issue",
   "task.takeover": "接管 / 交还了任务",
   "session.cancelled": "结束了 Agent 会话",
+  "review.submitted": "提交了评审",
+  "test_run.completed": "提交了测试结果",
+  "gate.evaluated": "复查了合并门禁",
+  "merge.queued": "进入合并队列",
+  "merge.completed": "合并完成",
+  "merge.failed": "合并队列转人工 / 移出",
+  "release.recorded": "生成了发布记录",
 };
 
 function Timeline({ taskId }: { taskId: string }) {

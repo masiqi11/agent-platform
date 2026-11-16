@@ -5,7 +5,7 @@
 
 ## 当前状态
 
-已完成阶段 S0–S5（身份/内核、项目群聊、任务看板审批收件箱、模型层与船长、代码执行链路）；S6–S9（评审测试与合并闭环、知识库、生产化、钉钉）尚未开始。详见 `docs/PROGRESS.md`。
+已完成阶段 S0–S5（身份/内核、项目群聊、任务看板审批收件箱、模型层与船长、代码执行链路）与 S6 主体（评审、测试、门禁、合并队列：主场景十步在脚本模型 + 本地仓库下全自动通过；真实 GitLab 实测待运行）；S7–S9（知识库、生产化、钉钉）尚未开始。详见 `docs/PROGRESS.md`。
 
 ## 技术栈
 
@@ -60,8 +60,9 @@ bun run dev
 
 - **仓库**：在「项目 → 仓库」绑定。本地仓库（开发/演示/离线）建在 `DATA_DIR/local-scm` 下，Issue、MR、CI 由平台模拟；GitLab 需要项目地址与 Developer 级令牌（`api` scope），绑定前做连通性与权限检查，绑定后只显示一次 webhook 地址与密钥。GitLab 适配器目前只用假服务验证过。
 - **沙箱**：开发默认 `SANDBOX=process`（子进程，无网络隔离，仅开发用）；生产必须 `SANDBOX=docker`，并设置 `SANDBOX_IMAGE`。沙箱里没有任何平台凭据，推送由控制面在沙箱外完成。
-- **体验主流程前半段**：`SEED_PASSWORD=… bun run seed` 后用 `owner@xinghe.test` 登录，在「支付服务」主群 @船长 说“支付服务最近超时，帮我查一下”，确认提议后开发 Agent 会在 `task/<编号>` 分支上修复、推送、开 MR，CI 通过后任务进入「评审中」。全程不需要模型密钥（脚本模型）。
-- 设计取舍见 `docs/adr/0006-s5-code-execution.md`。
+- **体验主流程前半段**：`SEED_PASSWORD=… bun run seed` 后用 `owner@xinghe.test` 登录，在「支付服务」主群 @船长 说“支付服务最近超时，帮我查一下”，确认提议后开发 Agent 会在 `task/<编号>` 分支上修复、推送、开 MR；评审 Agent 提两条意见，开发 Agent 返工；评审通过后测试 Agent 在独立环境测试；之后在「收件箱」批准合并审批，合并队列完成合并、关闭 Issue，船长在群里发完成摘要。全程不需要模型密钥（脚本模型）。
+- 设计取舍见 `docs/adr/0006-s5-code-execution.md`、`docs/adr/0007-s6-review-test-merge.md`。
+- **真实 GitLab 实测**（手动）：`bun test/gitlab/s6-gitlab.ts --print-seed DIR` 生成演示仓库（含 `.gitlab-ci.yml`）推到测试项目后，配置仓库密钥 `GITLAB_E2E_URL` / `GITLAB_E2E_TOKEN`，在 Actions 手动运行 `gitlab-e2e`。
 
 ## 目录
 

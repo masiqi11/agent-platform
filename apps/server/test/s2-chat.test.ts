@@ -189,7 +189,10 @@ describe("S2 messages", () => {
     const link = await t.req("GET", `/api/v1/attachments/${att.id}/link`, { token: viewer });
     const raw = await t.app.handle(new Request(`http://localhost${link.body.url}`));
     expect(await raw.text()).toBe("timeout=30s\n");
-    const tampered = await t.app.handle(new Request(`http://localhost${link.body.url.replace(/sig=./, "sig=0")}`));
+    // Flip the first signature character to a *different* one (replacing it with a fixed "0" was a no-op ~1/16 of runs).
+    const tamperedUrl = (link.body.url as string).replace(/sig=(.)/, (_m: string, c: string) => `sig=${c === "0" ? "1" : "0"}`);
+    expect(tamperedUrl).not.toBe(link.body.url);
+    const tampered = await t.app.handle(new Request(`http://localhost${tamperedUrl}`));
     expect(tampered.status).toBe(404);
     const exe = new FormData();
     exe.append("file", new File(["MZ"], "x.exe", { type: "application/x-msdownload" }));

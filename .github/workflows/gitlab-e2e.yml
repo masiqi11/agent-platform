@@ -1,0 +1,35 @@
+name: gitlab-e2e
+# Main scenario steps 4–8 on a real GitLab CE + Runner (S6 exit criterion). Manual only.
+# Needs repository secrets GITLAB_E2E_URL (test project URL) and GITLAB_E2E_TOKEN (Developer
+# project token, scope api); optional GITLAB_E2E_CA (PEM). See apps/server/test/gitlab/s6-gitlab.ts.
+on:
+  workflow_dispatch:
+jobs:
+  gitlab:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    services:
+      postgres:
+        image: pgvector/pgvector:pg16
+        env: { POSTGRES_USER: agent, POSTGRES_PASSWORD: ci-only, POSTGRES_DB: agent_platform_test }
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd "pg_isready -U agent" --health-interval 5s --health-retries 20
+    env:
+      TEST_DATABASE_URL: postgres://agent:ci-only@127.0.0.1:5432/agent_platform_test
+      DATABASE_URL: postgres://agent:ci-only@127.0.0.1:5432/agent_platform_test
+    steps:
+      - uses: actions/checkout@v4
+      - uses: oven-sh/setup-bun@v2
+        with: { bun-version: 1.4.4 }
+      - run: bun install --frozen-lockfile
+      - name: main scenario on GitLab
+        working-directory: apps/server
+        env:
+          GITLAB_URL: ${{ secrets.GITLAB_E2E_URL }}
+          GITLAB_TOKEN: ${{ secrets.GITLAB_E2E_TOKEN }}
+          GITLAB_CA: ${{ secrets.GITLAB_E2E_CA }}
+        run: bun test/gitlab/s6-gitlab.ts
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with: { name: s6-gitlab-result, path: docs/results/s6-gitlab.json }

@@ -177,7 +177,10 @@ export function createTasks(d: TaskDeps) {
     f.mrOpened = Boolean(ws?.mrRef);
     f.ciPassed = ws?.ci?.status === "success" && ws.ci.sha === head;
     f.evidenceComplete = Boolean(ws?.diffStat) && f.ciPassed;
-    f.reviewApproved = effective?.verdict === "approved";
+    f.humanReviewRequired = Boolean(ws?.diffStat?.humanReviewRequired);
+    f.humanReviewApproved = human?.verdict === "approved";
+    // GIT-补7: when a human review is required, an agent approval alone is not enough.
+    f.reviewApproved = effective?.verdict === "approved" && (!f.humanReviewRequired || f.humanReviewApproved);
     f.testPlanExists = Boolean(t.testPlan);
     f.testPassed = tests[0]?.status === "passed";
     f.merged = mq?.status === "merged";

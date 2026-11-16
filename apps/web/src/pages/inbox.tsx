@@ -175,7 +175,18 @@ function TaskBrief({ taskId }: { taskId: string }) {
   );
 }
 
-const EVIDENCE_LABEL: Record<string, string> = { diff: "变更", ci: "CI", tests: "测试", coverage: "覆盖率", risk: "风险", rollback: "回滚方案", mr: "MR", summary: "摘要" };
+const EVIDENCE_LABEL: Record<string, string> = {
+  diff: "变更",
+  ci: "CI",
+  tests: "测试",
+  review: "评审",
+  cost: "成本",
+  coverage: "覆盖率",
+  risk: "风险",
+  rollback: "回滚方案",
+  mr: "MR",
+  summary: "摘要",
+};
 
 function ApprovalDetail({ id }: { id: string }) {
   const a = useQuery({ queryKey: ["approval", id], queryFn: () => unwrap(api.api.v1.approvals({ id }).get()) });
@@ -239,7 +250,7 @@ function ApprovalDetail({ id }: { id: string }) {
             {Object.entries(ap.evidence).map(([k, v]) => (
               <div key={k} className="contents">
                 <dt className="text-muted-foreground">{EVIDENCE_LABEL[k] ?? k}</dt>
-                <dd className="font-mono text-xs break-all">{typeof v === "string" ? v : JSON.stringify(v)}</dd>
+                <dd className="text-sm break-all">{typeof v === "string" ? v : JSON.stringify(v)}</dd>
               </div>
             ))}
           </dl>

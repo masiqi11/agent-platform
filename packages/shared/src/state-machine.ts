@@ -28,6 +28,9 @@ export interface TaskFacts {
   mergeApproved: boolean;
   mergeApprovalRequired: boolean;
   openBlockers: number;
+  /** GIT-补7: change scope requires a human review regardless of mergePolicy. */
+  humanReviewRequired: boolean;
+  humanReviewApproved: boolean;
 }
 
 export interface TransitionInput {
@@ -208,4 +211,31 @@ export const emptyFacts = (): TaskFacts => ({
   mergeApproved: false,
   mergeApprovalRequired: true,
   openBlockers: 0,
+  humanReviewRequired: false,
+  humanReviewApproved: false,
 });
+
+export type GateKey = "ci_passed" | "review_approved" | "human_review" | "test_passed" | "no_blockers" | "merge_approval";
+export interface GateItem {
+  key: GateKey;
+  label: string;
+  ok: boolean;
+}
+
+/**
+ * Merge gate (§12.8): review ∧ test ∧ CI on the current head ∧ no open blockers ∧ (human review
+ * when the scope guard demands it) ∧ (merge approval when mergePolicy=require_approval).
+ * Server (merge queue) and UI (gate checklist) use this one definition.
+ */
+export function evaluateGate(f: TaskFacts): { ok: boolean; items: GateItem[]; missing: GateKey[] } {
+  const items: GateItem[] = [
+    { key: "ci_passed", label: "CI 通过（当前提交）", ok: f.ciPassed },
+    { key: "review_approved", label: "评审通过（当前提交）", ok: f.reviewApproved },
+    ...(f.humanReviewRequired ? [{ key: "human_review" as const, label: "人类评审通过（改动范围要求）", ok: f.humanReviewApproved }] : []),
+    { key: "test_passed", label: "测试通过（当前提交）", ok: f.testPassed },
+    { key: "no_blockers", label: "无未决阻塞", ok: f.openBlockers === 0 },
+    ...(f.mergeApprovalRequired ? [{ key: "merge_approval" as const, label: "合并审批通过（当前提交）", ok: f.mergeApproved }] : []),
+  ];
+  const missing = items.filter((i) => !i.ok).map((i) => i.key);
+  return { ok: missing.length === 0, items, missing };
+}

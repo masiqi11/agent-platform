@@ -95,6 +95,8 @@ export const demoScript: Script = (req) => {
     return { content: JSON.stringify({ answer: `相关项目：${projects.join("、")}。详见各项目摘要。`, sources: projects }) };
   }
   if (req.purpose === "dev.turn") return devScript(req);
+  if (req.purpose === "review.turn") return reviewerScript(req);
+  if (req.purpose === "test.turn") return testerScript(req);
   if (req.purpose === "captain.turn") {
     const t = triggerText(req)
       .replace(/@\S+\s*/g, "")
@@ -153,6 +155,7 @@ interface DevState {
   mr: string | null;
   ci: { status: string; sha: string } | null;
   testCommand: string;
+  review?: { sha: string; round: number; comments: Array<{ path?: string; line?: number; body: string }> } | null;
 }
 
 /** Tool results of the current turn, in order: `<tool_result name="x">json</tool_result>`. */
@@ -194,6 +197,40 @@ export const devScript: Script = (req) => {
   const last = (name: string) => [...res].reverse().find((r) => r.name === name);
   const call = (content: string, name: string, args: Record<string, unknown>) => ({ content, toolCalls: [{ name, arguments: args }] });
   const committed = st.head !== st.base;
+  // Rework: an open change request on the current head comes first (main scenario step 6).
+  if (st.review && st.review.sha === st.head) {
+    const wroteFiles = res.filter((r) => r.name === "write_file" && r.ok).map((r) => asText(r.data.path));
+    const gw = [...res].reverse().find((r) => r.name === "read_file" && r.data.path === "src/gateway.ts");
+    if (!gw) return call("先看评审意见涉及的文件。", "read_file", { path: "src/gateway.ts" });
+    if (!wroteFiles.includes("src/gateway.ts")) {
+      const lines = asText(gw.data.content).split("\n");
+      const i = lines.findIndex((l) => /GATEWAY_CALL_TIMEOUT_MS\s*=/.test(l));
+      if (i >= 0 && !/必须小于/.test(lines[i - 1] ?? "")) lines.splice(i, 0, "// 必须小于上游网关超时（UPSTREAM_GATEWAY_TIMEOUT_MS），给重试留出余量；不要改回 30s。");
+      return call("按评审意见补充超时约束的注释。", "write_file", { path: "src/gateway.ts", content: lines.join("\n") });
+    }
+    if (!wroteFiles.includes("test/gateway-default.test.ts"))
+      return call("按评审意见补充默认超时的测试。", "write_file", {
+        path: "test/gateway-default.test.ts",
+        content: [
+          'import { expect, test } from "bun:test";',
+          // (built in two parts so module-boundary checks don't read this generated text as an import)
+          `import { GATEWAY_CALL_TIMEOUT_MS, UPSTREAM_GATEWAY_TIMEOUT_MS, callGateway } ${"from"} "../src/gateway";`,
+          "",
+          'test("default timeout leaves headroom below the upstream gateway", () => {',
+          "  expect(GATEWAY_CALL_TIMEOUT_MS).toBeLessThanOrEqual(UPSTREAM_GATEWAY_TIMEOUT_MS * 0.8);",
+          "});",
+          'test("a hung call fails with the default timeout path", async () => {',
+          '  await expect(callGateway(() => new Promise<never>(() => {}), 20)).rejects.toThrow("gateway timeout");',
+          "});",
+          "",
+        ].join("\n"),
+      });
+    const ran = [...res].reverse().find((r) => r.name === "run_command");
+    const wroteIdx = res.map((r) => r.name).lastIndexOf("write_file");
+    if (!ran || res.indexOf(ran) < wroteIdx) return call("改完跑测试。", "run_command", { command: st.testCommand });
+    if (ran.data.exitCode !== 0) return call("按评审意见修改后测试失败。", "block_task", { reason: "按评审意见修改后测试失败", needs: "人类 owner" });
+    return call("提交评审修改。", "commit", { message: `按评审意见修改（第 ${st.review.round} 轮）：补充超时约束注释与默认超时测试` });
+  }
   if (st.ci && st.ci.sha === st.head && committed && st.mr) {
     if (st.ci.status === "success" && st.taskStatus === "in_progress")
       return call("CI 已通过，提交评审。", "request_review", {
@@ -233,6 +270,86 @@ export const devScript: Script = (req) => {
   if (!ranAfterWrite) return call("修改后重新跑测试。", "run_command", { command: st.testCommand });
   if (after.data.exitCode !== 0) return call("修改后测试仍失败。", "block_task", { reason: "修改后测试仍然失败", needs: "人类 owner" });
   return call("测试通过，提交。", "commit", { message: "修复网关调用超时：超时时间小于上游网关超时\n\n复现：仓库测试失败；修复后全部通过。" });
+};
+
+/* ───────────── scripted reviewer / tester (S6) ───────────── */
+
+function qaState(req: ScriptRequest): Record<string, unknown> | null {
+  const m = req.messages
+    .map((x) => x.content)
+    .join("\n")
+    .match(/<state>\s*(\{[\s\S]*?\})\s*<\/state>/);
+  try {
+    return m ? (JSON.parse(m[1]!) as Record<string, unknown>) : null;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Plays a careful reviewer: if the change has no test changes, it asks for two things (an explanatory
+ * comment next to the timeout and a regression test) — main scenario step 6; otherwise it approves,
+ * marks every criterion and confirms the test plan.
+ */
+export const reviewerScript: Script = (req) => {
+  const st = qaState(req);
+  if (!st) return { content: "缺少状态。" };
+  const files = (st.files as string[] | undefined) ?? [];
+  const criteria = (st.criteria as Array<{ id: string }> | undefined) ?? [];
+  const touchesTests = files.some((f) => /(^|\/)(test|tests|__tests__)\//.test(f) || /\.test\.[jt]sx?$/.test(f));
+  if (!touchesTests)
+    return {
+      content: "改动方向正确，但还有两点需要修改。",
+      toolCalls: [
+        {
+          name: "submit_review",
+          arguments: {
+            verdict: "changes_requested",
+            summary: "超时修复方向正确，需补充约束说明与回归测试。",
+            comments: [
+              { path: files.find((f) => f.startsWith("src/")) ?? files[0] ?? "src", line: 4, body: "请在超时常量旁注明它必须小于上游网关的超时，避免以后被改回 30s。" },
+              { path: "test/", body: "请补充一个回归测试：默认超时要明显小于上游网关超时，且挂起的调用会快速失败。" },
+            ],
+          },
+        },
+      ],
+    };
+  return {
+    content: "意见已处理，评审通过。",
+    toolCalls: [
+      {
+        name: "submit_review",
+        arguments: {
+          verdict: "approved",
+          summary: "修复与回归测试都到位。",
+          criteria: Object.fromEntries(criteria.map((c) => [c.id, "met"])),
+          testPlan: { cases: ["运行仓库全部测试", "核对默认超时小于上游网关超时", "挂起调用在超时后快速失败"], confirmedNote: "评审确认" },
+        },
+      },
+    ],
+  };
+};
+
+/** Plays a tester: the platform's auto run decides; every criterion gets a verdict with evidence. */
+export const testerScript: Script = (req) => {
+  const st = qaState(req);
+  if (!st) return { content: "缺少状态。" };
+  const auto = (st.autoRun ?? {}) as { exitCode?: number; logArtifactId?: string };
+  const criteria = (st.criteria as Array<{ id: string; text: string }> | undefined) ?? [];
+  const pass = auto.exitCode === 0;
+  return {
+    content: pass ? "测试全部通过。" : "测试未通过。",
+    toolCalls: [
+      {
+        name: "submit_test_result",
+        arguments: {
+          status: pass ? "passed" : "failed",
+          summary: pass ? "仓库测试全部通过" : `仓库测试失败（exit ${auto.exitCode}）`,
+          criteriaResults: criteria.map((c) => ({ id: c.id, verdict: pass ? "met" : "unmet", evidence: `${pass ? "通过" : "失败"}：仓库测试（日志 ${auto.logArtifactId ?? "-"}）` })),
+        },
+      },
+    ],
+  };
 };
 
 /** A model that never follows instructions (TRAP-14). */

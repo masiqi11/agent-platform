@@ -63,6 +63,8 @@ const Facts = t.Object({
   mergeApproved: t.Boolean(),
   mergeApprovalRequired: t.Boolean(),
   openBlockers: t.Number(),
+  humanReviewRequired: t.Boolean(),
+  humanReviewApproved: t.Boolean(),
 });
 const TaskDetail = t.Object({
   ...TaskSchema.properties,

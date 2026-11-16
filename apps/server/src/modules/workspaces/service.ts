@@ -1,5 +1,5 @@
 import { existsSync } from "node:fs";
-import { mkdir, mkdtemp, readdir, rm, statfs } from "node:fs/promises";
+import { mkdir, mkdtemp, readdir, rm, stat, statfs } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { DEFAULT_PROJECT_SETTINGS, findSecrets, type ProjectSettings } from "@ap/shared";
@@ -415,17 +415,17 @@ export function createWorkspaces(d: { config: Config; db: Database; audit: Audit
   }
 
   /** Local CI runner: fresh checkout of the pushed sha, repo test command in the sandbox, log as evidence. */
-  async function runLocalCi(p: { workspaceId: string; pipelineId: string; sha: string }) {
-    const ws = await load(p.workspaceId);
-    const r = (await d.repos.byId(ws.repoId))!;
-    const scm = d.repos.localScm(r);
+  /** Runs the repo test command on one sha in the sandbox (fresh checkout from the local bare repo); returns status + redacted log. */
+  async function execPipeline(r: RepoRow, sha: string) {
     const dir = await mkdtemp(join(tmpdir(), "ap-ci-"));
     let res: ExecResult | null = null;
     let status: PipelineStatus = "failed";
     let logText = "";
     try {
       await git(["clone", "-q", r.url, dir], { cwd: "/" });
-      await git(["checkout", "-q", p.sha], { cwd: dir });
+      // Rebased merge-queue commits live under refs/merge-queue/* (not fetched by a plain clone).
+      await git(["fetch", "-q", "origin", "+refs/merge-queue/*:refs/remotes/mq/*"], { cwd: dir, allowFail: true });
+      await git(["checkout", "-q", sha], { cwd: dir });
       const cmd = d.repos.settingsOf(r).testCommand || "bun test";
       res = await d.sandbox.exec({ cwd: dir, cmd, image: d.repos.settingsOf(r).image, timeoutMs: d.config.sandbox.timeoutMs });
       status = res.code === 0 ? "success" : "failed";
@@ -435,7 +435,15 @@ export function createWorkspaces(d: { config: Config; db: Database; audit: Audit
     } finally {
       await rm(dir, { recursive: true, force: true });
     }
-    const safe = redactValue(logText);
+    return { status, log: redactValue(logText), durationMs: res?.durationMs ?? 0 };
+  }
+
+  /** Local CI runner: fresh checkout of the pushed sha, repo test command in the sandbox, log as evidence. */
+  async function runLocalCi(p: { workspaceId: string; pipelineId: string; sha: string }) {
+    const ws = await load(p.workspaceId);
+    const r = (await d.repos.byId(ws.repoId))!;
+    const scm = d.repos.localScm(r);
+    const { status, log: safe, durationMs } = await execPipeline(r, p.sha);
     const obj = await d.objectStore.put(`ci/${ws.tenantId}/${ws.id}/${p.pipelineId}.log`, safe);
     const sys = await d.identity.systemCtx(ws.tenantId);
     await db.root.insert(artifact).values({
@@ -451,7 +459,38 @@ export function createWorkspaces(d: { config: Config; db: Database; audit: Audit
     });
     await scm.finishPipeline(p.pipelineId, status, safe);
     await applyCi(ws.id, { sha: p.sha, status, pipelineId: p.pipelineId });
-    return { status, durationMs: res?.durationMs ?? 0 };
+    return { status, durationMs };
+  }
+
+  /**
+   * CI for a sha that is not a task head: the merge queue's rebased commit, or the default branch
+   * after a merge (GIT-补4). Emits pipeline.completed with `purpose` so the queue can react.
+   */
+  async function runShaPipeline(p: { repoId: string; pipelineId: string; sha: string; purpose: "merge_queue" | "main"; projectId: string; itemId?: string; taskId?: string }) {
+    const r = (await d.repos.byId(p.repoId))!;
+    const { status, log: safe } = await execPipeline(r, p.sha);
+    const sys = await d.identity.systemCtx(r.tenantId);
+    const obj = await d.objectStore.put(`ci/${r.tenantId}/${p.purpose}/${p.pipelineId}.log`, safe);
+    await db.root.insert(artifact).values({
+      id: newId("art"),
+      tenantId: r.tenantId,
+      taskId: p.taskId ?? null,
+      kind: "log",
+      name: `CI ${p.purpose === "main" ? "主干" : "合并队列"} ${p.sha.slice(0, 8)}.log`,
+      uri: obj.uri,
+      sha256: obj.sha256,
+      size: obj.size,
+      createdBy: sys.actor.principalId,
+    });
+    await d.repos.localScm(r).finishPipeline(p.pipelineId, status, safe);
+    await d.events.emit(sys, {
+      type: "pipeline.completed",
+      aggregateType: "repo",
+      aggregateId: r.id,
+      payload: { projectId: p.projectId, repoId: r.id, sha: p.sha, status, pipelineId: p.pipelineId, purpose: p.purpose, itemId: p.itemId ?? null },
+      idempotencyKey: `ci:${r.id}:${p.pipelineId}:${status}`,
+    });
+    return { status };
   }
 
   /** GitLab polling fallback when webhooks are missing/late (§12.7). */
@@ -469,6 +508,24 @@ export function createWorkspaces(d: { config: Config; db: Database; audit: Audit
       await d.repos.onAuthError(r, e);
       throw e;
     }
+  }
+
+  /**
+   * Independent checkout for review / test (§12.7): reviewer and tester never share the dev's working
+   * directory, and test against exactly the commit their conclusion will be bound to.
+   */
+  async function checkout(t: TaskRow, r: RepoRow, sha: string, purpose: "review" | "test") {
+    const mirror = await syncMirror(r);
+    const dir = join(root, t.tenantId, t.id, `${r.name}.${purpose}`);
+    await rm(dir, { recursive: true, force: true });
+    await mkdir(resolve(dir, ".."), { recursive: true });
+    await git(["clone", "-q", "--no-hardlinks", mirror, dir], { cwd: "/" });
+    await git(["checkout", "-q", "--detach", sha], { cwd: dir });
+    return dir;
+  }
+  /** FR-REL-02: the test environment is destroyed when the run ends. */
+  async function dropCheckout(dir: string) {
+    if (dir.startsWith(root + "/") && /\.(review|test)$/.test(dir)) await rm(dir, { recursive: true, force: true });
   }
 
   /** FR-GIT-07: remove the directory (and container), keep the branch and the record. */
@@ -513,6 +570,16 @@ export function createWorkspaces(d: { config: Config; db: Database; audit: Audit
         for (const taskDir of await readdir(join(root, tenantDir)).catch(() => [])) {
           for (const repoDir of await readdir(join(root, tenantDir, taskDir)).catch(() => [])) {
             const p = join(root, tenantDir, taskDir, repoDir);
+            // Review/test checkouts are short-lived; only reclaim ones left behind for over 2 h.
+            if (
+              /\.(review|test)$/.test(repoDir) &&
+              Date.now() -
+                (await stat(p)
+                  .then((x) => x.mtimeMs)
+                  .catch(() => 0)) <
+                2 * 3600_000
+            )
+              continue;
             if (!live.has(p)) {
               await rm(p, { recursive: true, force: true });
               orphans++;
@@ -583,6 +650,28 @@ export function createWorkspaces(d: { config: Config; db: Database; audit: Audit
     };
   }
 
-  return { ensure, commit, push, openMr, startCi, applyCi, runLocalCi, pollCi, release, sweep, diskUsage, exec, view, load, forTask, syncMirror, settingsOf };
+  return {
+    checkout,
+    dropCheckout,
+    ensure,
+    commit,
+    push,
+    openMr,
+    startCi,
+    applyCi,
+    runLocalCi,
+    runShaPipeline,
+    execPipeline,
+    pollCi,
+    release,
+    sweep,
+    diskUsage,
+    exec,
+    view,
+    load,
+    forTask,
+    syncMirror,
+    settingsOf,
+  };
 }
 export type Workspaces = ReturnType<typeof createWorkspaces>;

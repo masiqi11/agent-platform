@@ -10,7 +10,7 @@ import { RetryLater, type createJobs } from "../../core/jobs";
 import { log } from "../../core/logger";
 import type { Config } from "../../config";
 import type { Database } from "../../db";
-import { agent, llmCall, project, session, task, workspace } from "../../db/schema";
+import { agent, llmCall, project, review, session, task, workspace } from "../../db/schema";
 import type { Identity } from "../identity/service";
 import { BudgetExceeded, LlmUnavailable, type ChatMsg, type Llm } from "../llm/service";
 import type { Repos } from "../repos/service";
@@ -149,6 +149,11 @@ export function createDevAgent(d: {
     if (ws.status !== "ready" || !ws.worktreePath) throw new DomainError("conflict", "工作区不可用");
     return ws;
   }
+  /** Read-only tools work in the agent's own checkout when it has one (reviewer / tester, §12.7). */
+  async function rootOf(st: TurnState) {
+    if (st.cwd) return st.cwd;
+    return (await wsOf(st)).worktreePath!;
+  }
   async function taskOf(st: TurnState) {
     const t = await loadTask(st.taskId!);
     if (!t) throw notFound("任务");
@@ -181,15 +186,15 @@ export function createDevAgent(d: {
   d.runtime.registerTool("list_files", {
     spec: { name: "list_files", description: "列出工作区目录下的文件（相对路径）", parameters: obj({ path: S }) },
     async run(_ctx, args, st) {
-      const ws = await wsOf(st);
-      const dir = resolveInWorkspace(ws.worktreePath!, typeof args.path === "string" && args.path ? args.path : ".");
+      const root = await rootOf(st);
+      const dir = resolveInWorkspace(root, typeof args.path === "string" && args.path ? args.path : ".");
       const out: string[] = [];
       const walk = async (p: string, depth: number) => {
         for (const e of await readdir(p, { withFileTypes: true })) {
           if (e.name === ".git" || e.name === "node_modules" || e.name === ".sandbox-home") continue;
           const q = join(p, e.name);
           if (e.isDirectory() && depth < 4) await walk(q, depth + 1);
-          else if (e.isFile()) out.push(relative(ws.worktreePath!, q));
+          else if (e.isFile()) out.push(relative(root, q));
           if (out.length >= 500) return;
         }
       };
@@ -200,13 +205,13 @@ export function createDevAgent(d: {
   d.runtime.registerTool("read_file", {
     spec: { name: "read_file", description: "读取工作区内的文件", parameters: obj({ path: S }, ["path"]) },
     async run(_ctx, args, st) {
-      const ws = await wsOf(st);
+      const root = await rootOf(st);
       const rel = str(args.path, "path", 500);
-      const p = resolveInWorkspace(ws.worktreePath!, rel);
+      const p = resolveInWorkspace(root, rel);
       const s = await stat(p).catch(() => null);
       if (!s?.isFile()) throw new DomainError("not_found", `文件不存在：${rel}`);
       const content = (await readFile(p, "utf8")).slice(0, READ_CAP);
-      return { path: relative(ws.worktreePath!, p), content, truncated: s.size > READ_CAP };
+      return { path: relative(root, p), content, truncated: s.size > READ_CAP };
     },
   });
   d.runtime.registerTool("write_file", {
@@ -226,8 +231,7 @@ export function createDevAgent(d: {
   d.runtime.registerTool("search_code", {
     spec: { name: "search_code", description: "在工作区代码中搜索（git grep，固定字符串）", parameters: obj({ pattern: S }, ["pattern"]) },
     async run(_ctx, args, st) {
-      const ws = await wsOf(st);
-      const r = await git(["grep", "-n", "-I", "-F", "--", str(args.pattern, "pattern", 200)], { cwd: ws.worktreePath!, allowFail: true });
+      const r = await git(["grep", "-n", "-I", "-F", "--", str(args.pattern, "pattern", 200)], { cwd: await rootOf(st), allowFail: true });
       const matches = r.out.split("\n").filter(Boolean).slice(0, 50);
       return { matches };
     },
@@ -355,7 +359,15 @@ export function createDevAgent(d: {
       ci: ci ? { status: ci.status, sha: ci.sha } : null,
       testCommand: d.repos.settingsOf(r).testCommand ?? "bun test",
       humanReviewRequired: Boolean(ws.diffStat?.humanReviewRequired),
+      // The latest change request, if it is still open (made on the current head): rework input.
+      review: await openChangeRequest(t.id, head),
     };
+  }
+
+  async function openChangeRequest(taskId: string, head: string) {
+    const [rv] = await db.root.select().from(review).where(eq(review.taskId, taskId)).orderBy(desc(review.createdAt)).limit(1);
+    if (!rv || rv.verdict !== "changes_requested" || rv.headSha !== head) return null;
+    return { sha: rv.headSha, round: rv.round, comments: rv.comments };
   }
 
   /** Concurrency cap per agent (AGT-补4): other tasks' running sessions with a live heartbeat. */
