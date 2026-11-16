@@ -4,6 +4,7 @@ import { AlertOctagon, CheckCircle2, Compass, FolderKanban, GitPullRequest, Inbo
 import { useState } from "react";
 import { PrincipalAvatar } from "@/components/agent-avatar";
 import { EmptyState, ErrorState, PageHeader } from "@/components/states";
+import { CitationChip } from "@/components/citation";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
@@ -153,7 +154,7 @@ function AskGlobalCaptain() {
             if (q.trim()) m.mutate(q.trim());
           }}
         >
-          <Input value={q} onChange={(e) => setQ(e.target.value)} placeholder="例如：哪个项目在处理支付回调超时？" aria-label="问全局船长" />
+          <Input value={q} onChange={(e) => setQ(e.target.value)} placeholder="例如：超时相关的计费逻辑在哪个仓库哪个文件？" aria-label="问全局船长" />
           <Button type="submit" size="icon" aria-label="提问" disabled={m.isPending || !q.trim()}>
             {m.isPending ? <Loader className="size-4 animate-spin" /> : <Send className="size-4" />}
           </Button>
@@ -162,24 +163,28 @@ function AskGlobalCaptain() {
         {m.data && (
           <div className="rounded-lg bg-muted/50 p-3 text-[13.5px] leading-relaxed" data-testid="global-answer">
             <p className="whitespace-pre-wrap">{m.data.answer}</p>
+            {m.data.consulted && m.data.consulted.length > 0 && <p className="mt-1 text-xs text-muted-foreground">已询问：{m.data.consulted.join("、")} 的项目船长</p>}
             {m.data.sources.length > 0 && (
-              <div className="mt-2 flex flex-wrap gap-1.5">
+              <div className="mt-2 space-y-1.5">
                 {m.data.sources.map((s) => (
-                  <Link
-                    key={s.projectId}
-                    to="/projects/$projectId"
-                    params={{ projectId: s.projectId }}
-                    className="rounded-full border bg-card px-2 py-0.5 font-mono text-[11px] hover:border-ring/50"
-                    title={s.snippet}
-                  >
-                    来源 · {s.key}
-                  </Link>
+                  <div key={s.projectId} className="flex flex-wrap items-center gap-1.5">
+                    <Link
+                      to="/projects/$projectId/knowledge"
+                      params={{ projectId: s.projectId }}
+                      className="rounded-full border bg-card px-2 py-0.5 font-mono text-[11px] hover:border-ring/50"
+                      title={s.snippet}
+                    >
+                      来源 · {s.key}
+                    </Link>
+                    {"stale" in s && s.stale && <span className="rounded-full bg-attention-soft px-1.5 py-0.5 text-[10.5px] text-attention">可能过期</span>}
+                    {"citations" in s && s.citations?.slice(0, 3).map((c) => <CitationChip key={`${c.repoId}:${c.path}:${c.startLine}`} c={{ ...c, projectId: s.projectId }} />)}
+                  </div>
                 ))}
               </div>
             )}
           </div>
         )}
-        {!m.data && <p className="text-xs text-muted-foreground">依据各项目目录与群摘要回答；没有依据时会直接说“未检索到依据”。</p>}
+        {!m.data && <p className="text-xs text-muted-foreground">依据你有权限的各项目知识库（代码、文档、决策、摘要）回答；没有依据时会直接说“未检索到依据”。</p>}
       </CardContent>
     </Card>
   );

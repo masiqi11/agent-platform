@@ -20,6 +20,7 @@ const TaskPage = lazy(() => import("@/pages/task").then((m) => ({ default: m.Tas
 const ModelsPage = lazy(() => import("@/pages/models").then((m) => ({ default: m.ModelsPage })));
 const SessionsPage = lazy(() => import("@/pages/sessions").then((m) => ({ default: m.SessionsPage })));
 const ReposPage = lazy(() => import("@/pages/repos").then((m) => ({ default: m.ReposPage })));
+const KnowledgePage = lazy(() => import("@/pages/knowledge").then((m) => ({ default: m.KnowledgePage })));
 const SystemPage = lazy(() => import("@/pages/system").then((m) => ({ default: m.SystemPage })));
 const AuditPage = lazy(() => import("@/pages/audit").then((m) => ({ default: m.AuditPage })));
 
@@ -139,6 +140,15 @@ const reposRoute = createRoute({
   },
 });
 
+const knowledgeRoute = createRoute({
+  getParentRoute: () => projectRoute,
+  path: "/knowledge",
+  component: function Knowledge() {
+    const { projectId } = knowledgeRoute.useParams();
+    return <KnowledgePage projectId={projectId} />;
+  },
+});
+
 const routeTree = rootRoute.addChildren([
   loginRoute,
   setupRoute,
@@ -151,7 +161,7 @@ const routeTree = rootRoute.addChildren([
     auditRoute,
     modelsRoute,
     systemRoute,
-    projectRoute.addChildren([projectHomeRoute, chatRoute, agentsRoute, boardRoute, taskRoute, sessionsRoute, reposRoute]),
+    projectRoute.addChildren([projectHomeRoute, chatRoute, agentsRoute, boardRoute, taskRoute, sessionsRoute, reposRoute, knowledgeRoute]),
   ]),
 ]);
 
