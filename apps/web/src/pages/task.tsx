@@ -12,6 +12,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Textarea } from "@/components/ui/textarea";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { api, unwrap } from "@/lib/api";
+import { useAgents } from "@/lib/projects";
 import { qk, queryClient } from "@/lib/query";
 import { STATUS_LABEL, tk, useTask, type TaskDetail, type TaskStatus } from "@/lib/tasks";
 import { cn } from "@/lib/utils";
@@ -320,6 +321,18 @@ function Comments({ taskId }: { taskId: string }) {
 function People({ task: t }: { task: TaskDetail }) {
   const members = useQuery({ queryKey: qk.projectMembers(t.projectId), queryFn: () => unwrap(api.api.v1.projects({ id: t.projectId }).members.get()) });
   const [adding, setAdding] = useState(false);
+  const agents = useAgents(t.projectId);
+  const devs = (agents.data ?? []).filter((a) => a.role === "dev" && (a.status === "active" || a.id === t.assignee?.id));
+  async function assign(agentId: string | null) {
+    try {
+      await unwrap(api.api.v1.tasks({ id: t.id }).patch({ assigneeAgentId: agentId }, { headers: { "if-match": String(t.version) } }));
+      toast.success(agentId ? "已分配" : "已取消分配");
+      void queryClient.invalidateQueries({ queryKey: tk.task(t.id) });
+      void queryClient.invalidateQueries({ queryKey: ["tasks", t.projectId] });
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : "分配失败");
+    }
+  }
   const humans = (members.data ?? []).filter((m) => m.kind === "human" && !t.owners.some((o) => o.principalId === m.principalId) && m.role !== "viewer");
   async function addOwner(pid: string) {
     try {
@@ -334,12 +347,28 @@ function People({ task: t }: { task: TaskDetail }) {
     <section className="space-y-3 rounded-xl border bg-card p-4 text-sm">
       <div>
         <h3 className="mb-1 text-xs font-medium text-muted-foreground">负责 Agent</h3>
-        {t.assignee ? (
-          <span className="inline-flex items-center gap-1.5 text-agent">
-            <Bot className="size-4" /> {t.assignee.name}
-          </span>
+        {t.status === "done" || t.status === "cancelled" ? (
+          t.assignee ? (
+            <span className="inline-flex items-center gap-1.5 text-agent">
+              <Bot className="size-4" /> {t.assignee.name}
+            </span>
+          ) : (
+            <span className="text-muted-foreground italic">未分配</span>
+          )
         ) : (
-          <span className="text-muted-foreground italic">未分配</span>
+          <Select value={t.assignee?.id ?? "none"} onValueChange={(v) => void assign(v === "none" ? null : v)}>
+            <SelectTrigger className="h-8" aria-label="负责 Agent">
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="none">未分配</SelectItem>
+              {devs.map((a) => (
+                <SelectItem key={a.id} value={a.id}>
+                  {a.name}
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
         )}
       </div>
       <div>

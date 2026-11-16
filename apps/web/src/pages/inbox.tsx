@@ -201,14 +201,16 @@ function ApprovalDetail({ id }: { id: string }) {
       setBusy(false);
     }
   }
-  const checks: [string, boolean | undefined][] = f
-    ? [
-        ["CI 通过", f.ciPassed],
-        ["评审通过", f.reviewApproved],
-        ["测试通过", f.testPassed],
-        ["证据齐全", f.evidenceComplete],
-      ]
-    : [];
+  // Delivery checks only matter for code-bound approvals (merge / release).
+  const checks: [string, boolean | undefined][] =
+    f && (ap.kind === "merge" || ap.kind === "release")
+      ? [
+          ["CI 通过", f.ciPassed],
+          ["评审通过", f.reviewApproved],
+          ["测试通过", f.testPassed],
+          ["证据齐全", f.evidenceComplete],
+        ]
+      : [];
   return (
     <div className="space-y-4" data-testid="approval-detail">
       <div className="flex flex-wrap items-center gap-2 text-sm">

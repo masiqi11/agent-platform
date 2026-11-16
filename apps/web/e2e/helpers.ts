@@ -1,3 +1,4 @@
+import { execFileSync } from "node:child_process";
 import { expect, type Page } from "@playwright/test";
 
 export const SHOTS = "../../screenshots";
@@ -32,4 +33,13 @@ export async function apiToken(page: Page, email: string, password = PW): Promis
   const r = await page.request.post("/api/v1/auth/sign-in", { data: { email, password } });
   expect(r.ok()).toBeTruthy();
   return (await r.json()).token;
+}
+
+/** Seeds the 【演示数据】 project (idempotent) through the server's seed CLI on the e2e database. */
+export function seedDemo() {
+  const base = process.env.TEST_DATABASE_URL;
+  if (!base) throw new Error("TEST_DATABASE_URL is required");
+  const u = new URL(base);
+  u.pathname = `/${process.env.E2E_DB ?? "agent_platform_e2e"}`;
+  execFileSync("bun", ["src/cli/seed-demo.ts", "--owner", "owner@xinghe.test"], { cwd: "../server", env: { ...process.env, DATABASE_URL: u.toString(), SEED_PASSWORD: PW }, stdio: "inherit" });
 }

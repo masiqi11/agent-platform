@@ -1,6 +1,5 @@
-import { execFileSync } from "node:child_process";
 import { expect, test } from "@playwright/test";
-import { apiToken, PW, shootBoth, watchConsole } from "./helpers";
+import { apiToken, seedDemo, shootBoth, watchConsole } from "./helpers";
 
 /**
  * Visual pass v2: seeds the 「演示数据」 project (multi-person chat, a thread, a task card, a decision
@@ -8,11 +7,7 @@ import { apiToken, PW, shootBoth, watchConsole } from "./helpers";
  */
 test("v2 visual: demo chat and project home (演示数据)", async ({ page }) => {
   test.setTimeout(120_000);
-  const base = process.env.TEST_DATABASE_URL;
-  expect(base, "TEST_DATABASE_URL is required").toBeTruthy();
-  const u = new URL(base!);
-  u.pathname = `/${process.env.E2E_DB ?? "agent_platform_e2e"}`;
-  execFileSync("bun", ["src/cli/seed-demo.ts", "--owner", "owner@xinghe.test"], { cwd: "../server", env: { ...process.env, DATABASE_URL: u.toString(), SEED_PASSWORD: PW }, stdio: "inherit" });
+  seedDemo();
 
   const con = watchConsole(page);
   const token = await apiToken(page, "owner@xinghe.test");
