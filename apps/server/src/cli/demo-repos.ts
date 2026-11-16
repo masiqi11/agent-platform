@@ -47,6 +47,63 @@ export async function placeOrder(order: Order, gateway: (o: Order) => Promise<{ 
   return callGateway(() => gateway(order));
 }
 `,
+  "src/callback.ts": `import { createHmac, timingSafeEqual } from "node:crypto";
+
+/** 支付回调：上游网关异步通知支付结果。必须先验签，再按订单号幂等处理。 */
+export interface CallbackPayload {
+  orderId: string;
+  status: "paid" | "failed";
+  amountCents: number;
+}
+
+/** 回调验签：HMAC-SHA256(body)，与上游约定的商户密钥。 */
+export function verifySignature(body: string, signature: string, merchantSecret: string): boolean {
+  const expected = createHmac("sha256", merchantSecret).update(body).digest("hex");
+  return expected.length === signature.length && timingSafeEqual(Buffer.from(expected), Buffer.from(signature));
+}
+
+const processed = new Set<string>();
+
+/** 幂等：同一订单号的重复回调只处理一次（上游会重试通知）。 */
+export function handleCallback(p: CallbackPayload): "processed" | "duplicate" {
+  if (processed.has(p.orderId)) return "duplicate";
+  processed.add(p.orderId);
+  return "processed";
+}
+`,
+  "src/refund.ts": `/** 退款：只能对已支付订单退款，且累计退款金额不能超过支付金额。 */
+export interface RefundRequest {
+  orderId: string;
+  paidCents: number;
+  refundedCents: number;
+  amountCents: number;
+}
+
+export function validateRefund(r: RefundRequest): string | null {
+  if (r.amountCents <= 0) return "退款金额必须为正数";
+  if (r.refundedCents + r.amountCents > r.paidCents) return "累计退款金额超过支付金额";
+  return null;
+}
+`,
+  "src/config.ts": `/** 支付服务配置：重试与对账。 */
+export const PAYMENT_RETRY_LIMIT = 2; // 调用上游网关失败后的最大重试次数
+export const RECONCILE_CRON = "0 2 * * *"; // 每天凌晨 2 点与上游对账
+export const CALLBACK_DEDUP_TTL_HOURS = 72; // 回调去重记录保留时长
+`,
+  "docs/runbook.md": `# 支付服务运维手册（演示数据）
+
+## 下单超时
+现象：下单接口长时间挂起后失败。先看 src/gateway.ts 的调用超时是否小于上游网关超时（5s）。
+
+## 回调失败
+现象：订单已支付但状态未更新。检查回调验签（src/callback.ts）与商户密钥是否轮换。
+
+## 对账差异
+每天凌晨 2 点对账（src/config.ts 的 RECONCILE_CRON）。差异单需人工复核后补单或退款。
+
+## 退款失败
+常见原因是累计退款超过支付金额，见 src/refund.ts。
+`,
   "test/gateway.test.ts": `import { describe, expect, test } from "bun:test";
 import { GATEWAY_CALL_TIMEOUT_MS, UPSTREAM_GATEWAY_TIMEOUT_MS, callGateway } from "../src/gateway";
 
@@ -90,6 +147,44 @@ export const BILLING_REPO: Record<string, string> = {
 
 export function total(lines: Line[]): number {
   return lines.reduce((n, l) => n + l.qty * l.unitCents, 0);
+}
+`,
+  "src/payments-client.ts": `/**
+ * 计费服务调用支付服务的客户端：超时相关的计费逻辑都在这里。
+ * 单次调用超时 3s（必须小于支付网关的 5s），失败最多重试 1 次；仍失败则账单记为「待支付」。
+ */
+export const PAYMENTS_CALL_TIMEOUT_MS = 3_000;
+export const PAYMENTS_RETRY = 1;
+
+export async function chargeInvoice(invoiceId: string, call: (id: string) => Promise<boolean>): Promise<"paid" | "pending"> {
+  for (let attempt = 0; attempt <= PAYMENTS_RETRY; attempt++) {
+    try {
+      if (await call(invoiceId)) return "paid";
+    } catch {
+      // 超时或失败：重试一次
+    }
+  }
+  return "pending";
+}
+`,
+  "src/tax.ts": `/** 税额：按税率计算，结果以分为单位。增值税默认 6%。 */
+export const DEFAULT_VAT_RATE = 0.06;
+
+export function taxCents(netCents: number, rate = DEFAULT_VAT_RATE): number {
+  return Math.round(netCents * rate);
+}
+`,
+  "src/rounding.ts": `/** 金额取整：分转元时使用银行家舍入（四舍六入五成双），避免对账误差累积。 */
+export function bankersRound(value: number): number {
+  const floor = Math.floor(value);
+  const diff = value - floor;
+  if (diff > 0.5) return floor + 1;
+  if (diff < 0.5) return floor;
+  return floor % 2 === 0 ? floor : floor + 1;
+}
+
+export function centsToYuan(cents: number): number {
+  return bankersRound(cents) / 100;
 }
 `,
   "test/invoice.test.ts": `import { expect, test } from "bun:test";

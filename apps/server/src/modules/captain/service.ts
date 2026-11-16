@@ -149,6 +149,26 @@ export interface CaptainDeps {
 export function createCaptain(d: CaptainDeps) {
   const { db } = d;
 
+  /** Set by the knowledge module (S7) to avoid a module cycle. */
+  const kbHooks: {
+    federated?: (
+      ctx: Ctx,
+      q: string,
+    ) => Promise<{
+      consulted: string[];
+      answers: Array<{
+        projectId: string;
+        key: string;
+        answer: {
+          answer: string;
+          confidence: string;
+          stale: boolean;
+          hits: Array<{ repoId: string | null; repoName: string | null; path: string; commit: string; startLine: number; endLine: number; sourceKind: string }>;
+        };
+      }>;
+    }>;
+  } = {};
+
   /* ───────────── loading ───────────── */
 
   async function captainFor(g: GroupRow): Promise<AgentRow | null> {
@@ -1147,6 +1167,27 @@ export function createCaptain(d: CaptainDeps) {
   async function askGlobal(ctx: Ctx, input: { question: string }) {
     const qtext = input.question.trim().slice(0, 500);
     if (!qtext) throw invalid("问题不能为空", [{ path: "/question", message: "必填" }]);
+    // S7: route through each project's captain over the knowledge base (FR-CAP-01); fall back to directory + summaries.
+    if (kbHooks.federated) {
+      const fed = await kbHooks.federated(ctx, qtext);
+      if (fed.answers.length) {
+        const ps = await d.projects.list(ctx);
+        return {
+          answer: fed.answers.map((a) => `【${a.key}】${a.answer.answer}`).join("\n\n"),
+          sources: fed.answers.map((a) => ({
+            projectId: a.projectId,
+            key: a.key,
+            name: ps.find((p) => p.id === a.projectId)?.name ?? a.key,
+            snippet: a.answer.answer.slice(0, 160),
+            confidence: a.answer.confidence,
+            stale: a.answer.stale,
+            citations: a.answer.hits.map((h) => ({ repoId: h.repoId, repoName: h.repoName, path: h.path, commit: h.commit, startLine: h.startLine, endLine: h.endLine, sourceKind: h.sourceKind })),
+          })),
+          consulted: fed.consulted,
+          model: "kb" as string | null,
+        };
+      }
+    }
     const ps = await d.projects.list(ctx);
     const materials: Array<{ projectId: string; key: string; name: string; text: string; score: number }> = [];
     for (const p of ps) {
@@ -1204,6 +1245,23 @@ export function createCaptain(d: CaptainDeps) {
     };
   }
 
-  return { completionSummary, consumer, turn, summarize, sweep, getSummary, refreshSummary, correctSummary, listDecisions, decide, askQuestion, answerQuestion, listQuestions, afterAccept, askGlobal };
+  return {
+    kbHooks,
+    completionSummary,
+    consumer,
+    turn,
+    summarize,
+    sweep,
+    getSummary,
+    refreshSummary,
+    correctSummary,
+    listDecisions,
+    decide,
+    askQuestion,
+    answerQuestion,
+    listQuestions,
+    afterAccept,
+    askGlobal,
+  };
 }
 export type Captain = ReturnType<typeof createCaptain>;

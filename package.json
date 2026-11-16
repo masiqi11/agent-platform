@@ -16,6 +16,7 @@
     "test": "turbo test",
     "migrate": "bun --cwd apps/server src/cli/migrate.ts",
     "seed": "bun --cwd apps/server src/cli/seed.ts",
+    "kb:eval": "bun --cwd apps/server src/cli/kb-eval.ts",
     "audit:verify": "bun --cwd apps/server src/cli/audit-verify.ts",
     "start": "bun --cwd apps/server src/main.ts",
     "e2e": "cd apps/web && bun x --no-install playwright test"

@@ -12,7 +12,8 @@
     "build": "tsc -p tsconfig.json",
     "test": "bun test --timeout 60000",
     "seed:demo": "bun src/cli/seed-demo.ts",
-    "seed": "bun src/cli/seed.ts"
+    "seed": "bun src/cli/seed.ts",
+    "kb:eval": "bun src/cli/kb-eval.ts"
   },
   "dependencies": {
     "@ap/shared": "workspace:*",
