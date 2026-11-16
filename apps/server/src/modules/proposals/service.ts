@@ -41,6 +41,8 @@ export interface CreateTaskPayload {
   rationale?: string;
 }
 
+const str = (v: unknown): string => (typeof v === "string" ? v : typeof v === "number" ? String(v) : "");
+
 /** Character-bigram Jaccard: cheap CJK-friendly similarity for duplicate hints (CAP-补3). */
 export function similarity(a: string, b: string) {
   const grams = (s: string) => {
@@ -101,12 +103,12 @@ export function createProposals(d: ProposalDeps) {
     const statusText = { pending: "待确认", accepted: "已确认", rejected: "已拒绝", expired: "已过期", superseded: "已被取代" }[status];
     if (kind === "create_task") {
       const ac = (payload.acceptanceCriteria as string[] | undefined) ?? [];
-      return [`【任务提议 · ${statusText}】${String(payload.title)}`, payload.description ? String(payload.description) : "", ac.length ? `验收标准：\n${ac.map((x) => `- ${x}`).join("\n")}` : ""]
+      return [`【任务提议 · ${statusText}】${str(payload.title)}`, payload.description ? str(payload.description) : "", ac.length ? `验收标准：\n${ac.map((x) => `- ${x}`).join("\n")}` : ""]
         .filter(Boolean)
         .join("\n");
     }
-    if (kind === "transition") return `【状态变更提议 · ${statusText}】${String(payload.taskRef ?? "")} → ${STATUS_LABELS[payload.to as TaskStatus] ?? String(payload.to)}`;
-    if (kind === "assign") return `【分配提议 · ${statusText}】${String(payload.taskRef ?? "")} → ${String(payload.agentName ?? payload.assigneeAgentId)}`;
+    if (kind === "transition") return `【状态变更提议 · ${statusText}】${str(payload.taskRef)} → ${STATUS_LABELS[payload.to as TaskStatus] ?? str(payload.to)}`;
+    if (kind === "assign") return `【分配提议 · ${statusText}】${str(payload.taskRef)} → ${str(payload.agentName ?? payload.assigneeAgentId)}`;
     return `【提议 · ${statusText}】`;
   }
 
@@ -144,17 +146,17 @@ export function createProposals(d: ProposalDeps) {
   async function create(ctx: Ctx, input: { projectId: string; groupId?: string | null; kind: Kind; payload: Record<string, unknown>; sourceMessageIds: string[]; policy?: string }) {
     await d.projects.assertWritable(ctx, input.projectId);
     await d.identity.require(ctx, "task.create", { projectId: input.projectId });
-    if (input.kind === "create_task" && !String(input.payload.title ?? "").trim()) throw invalid("提议缺少标题", [{ path: "/payload/title", message: "必填" }]);
+    if (input.kind === "create_task" && !str(input.payload.title).trim()) throw invalid("提议缺少标题", [{ path: "/payload/title", message: "必填" }]);
     if (input.kind === "merge") throw invalid("合并通过审批流程发起，不能作为提议");
     const sources = await validSources(input.projectId, input.sourceMessageIds);
     if (!sources.length) throw invalid("提议必须引用至少一条存在的来源消息", [{ path: "/sourceMessageIds", message: "为空或均不存在" }]);
     const payload = { ...input.payload };
-    if (input.kind === "create_task") payload.duplicates = await duplicates(input.projectId, String(payload.title));
+    if (input.kind === "create_task") payload.duplicates = await duplicates(input.projectId, str(payload.title));
     if (payload.assigneeAgentId) {
       const [ag] = await db.root
         .select({ name: agent.name, projectId: agent.projectId, role: agent.role })
         .from(agent)
-        .where(eq(agent.id, String(payload.assigneeAgentId)));
+        .where(eq(agent.id, str(payload.assigneeAgentId)));
       if (!ag || ag.projectId !== input.projectId || ag.role !== "dev") delete payload.assigneeAgentId;
       else payload.agentName = ag.name;
     }
@@ -171,7 +173,7 @@ export function createProposals(d: ProposalDeps) {
             eq(proposal.status, "pending"),
             eq(proposal.proposedBy, ctx.actor.principalId),
             sql`${proposal.createdAt} > now() - make_interval(secs => ${UPDATE_WINDOW_MS / 1000})`,
-            input.kind === "create_task" ? sql`true` : sql`${proposal.payload}->>'taskId' = ${String(payload.taskId ?? "")}`,
+            input.kind === "create_task" ? sql`true` : sql`${proposal.payload}->>'taskId' = ${str(payload.taskId)}`,
           ),
         )
         .orderBy(desc(proposal.createdAt))
@@ -283,7 +285,7 @@ export function createProposals(d: ProposalDeps) {
       const t = await d.tasks.create(ctx, {
         projectId: p.projectId,
         groupId: p.groupId,
-        title: String(pl.title),
+        title: str(pl.title),
         description: (pl.description as string) ?? "",
         acceptanceCriteria: (pl.acceptanceCriteria as string[]) ?? [],
         priority: (pl.priority as CreateTaskPayload["priority"]) ?? "P2",
@@ -298,11 +300,11 @@ export function createProposals(d: ProposalDeps) {
       // "船长提议 + 人类确认" → ready, if the guards already hold.
       if (t.assignee && t.acceptanceCriteria.length) await d.tasks.transition(ctx, t.id, "ready", {}, { viaProposalId: id }).catch(() => undefined);
     } else if (p.kind === "assign") {
-      await d.tasks.update(ctx, String(pl.taskId), { assigneeAgentId: String(pl.assigneeAgentId) });
-      resultTaskIds.push(String(pl.taskId));
+      await d.tasks.update(ctx, str(pl.taskId), { assigneeAgentId: str(pl.assigneeAgentId) });
+      resultTaskIds.push(str(pl.taskId));
     } else if (p.kind === "transition") {
-      await d.tasks.transition(ctx, String(pl.taskId), pl.to as TaskStatus, { reason: pl.reason as string | undefined, needs: pl.needs as string | undefined }, { viaProposalId: id });
-      resultTaskIds.push(String(pl.taskId));
+      await d.tasks.transition(ctx, str(pl.taskId), pl.to as TaskStatus, { reason: pl.reason as string | undefined, needs: pl.needs as string | undefined }, { viaProposalId: id });
+      resultTaskIds.push(str(pl.taskId));
     } else throw new DomainError("invalid", "不支持的提议类型");
     const [u] = await db.tx(async (q) => {
       const r = await q
@@ -381,7 +383,7 @@ export function createProposals(d: ProposalDeps) {
           refType: "proposal",
           refId: p.id,
           groupKey: `proposal:${p.id}`,
-          title: `提议即将过期：${String(p.payload.title ?? "")}`,
+          title: `提议即将过期：${str(p.payload.title)}`,
           projectId: p.projectId,
         })),
       );

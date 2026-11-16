@@ -197,12 +197,3 @@ export function HomePage() {
     </div>
   );
 }
-
-export function InboxPage() {
-  return (
-    <div>
-      <PageHeader title={t("inbox.title")} />
-      <EmptyState icon={Inbox} title="一切就绪" body={t("inbox.empty")} />
-    </div>
-  );
-}

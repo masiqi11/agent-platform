@@ -33,6 +33,18 @@ export function useProjectLive(projectId: string) {
         void queryClient.invalidateQueries({ queryKey: qk.projectMembers(projectId) });
         void queryClient.invalidateQueries({ queryKey: qk.agents(projectId) });
       }
+      if (t.startsWith("task.") || t.startsWith("approval.") || t.startsWith("proposal.")) {
+        void queryClient.invalidateQueries({ queryKey: ["tasks", projectId] });
+        const taskId = (f.event.payload as { taskId?: unknown }).taskId;
+        if (typeof taskId === "string") {
+          for (const k of ["task", "task-timeline", "task-comments", "task-approvals"]) void queryClient.invalidateQueries({ queryKey: [k, taskId] });
+        }
+        if (t.startsWith("proposal.")) {
+          void queryClient.invalidateQueries({ queryKey: ["proposals", projectId] });
+          const pid = (f.event.payload as { proposalId?: unknown }).proposalId;
+          if (typeof pid === "string") void queryClient.invalidateQueries({ queryKey: ["proposal", pid] });
+        }
+      }
       if (t.startsWith("project.") || t.startsWith("task.")) {
         void queryClient.invalidateQueries({ queryKey: qk.project(projectId) });
         void queryClient.invalidateQueries({ queryKey: qk.projects });

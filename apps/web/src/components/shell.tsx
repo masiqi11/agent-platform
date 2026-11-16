@@ -7,6 +7,7 @@ import {
   FolderKanban,
   Home,
   Inbox,
+  KanbanSquare,
   LayoutDashboard,
   LogOut,
   MessagesSquare,
@@ -19,6 +20,7 @@ import {
   WifiOff,
   type LucideIcon,
 } from "lucide-react";
+import { useQuery } from "@tanstack/react-query";
 import { useEffect, useState, type ReactNode } from "react";
 import { Avatar, AvatarFallback } from "@/components/ui/avatar";
 import { Button } from "@/components/ui/button";
@@ -28,6 +30,7 @@ import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip
 import { Logo } from "@/components/logo";
 import { api } from "@/lib/api";
 import { t, type MsgKey } from "@/lib/i18n";
+import { inboxQuery, useInboxLive } from "@/lib/inbox";
 import { canAudit, isAdmin, useMe } from "@/lib/me";
 import { useGroups, useProjectLive, useProjects } from "@/lib/projects";
 import { queryClient } from "@/lib/query";
@@ -75,6 +78,12 @@ function NavLink({ item, collapsed, path: given }: { item: NavItem; collapsed: b
   );
 }
 
+function InboxNav({ collapsed }: { collapsed: boolean }) {
+  useInboxLive();
+  const q = useQuery(inboxQuery("all"));
+  return <NavLink item={{ to: "/inbox", label: "nav.inbox", icon: Inbox, badge: q.data?.unread }} collapsed={collapsed} />;
+}
+
 function Section({ label, collapsed, children }: { label: string; collapsed: boolean; children: ReactNode }) {
   return (
     <div className="mt-5">
@@ -110,6 +119,7 @@ function ActiveProject({ id, name, pkey, collapsed, path }: { id: string; name: 
   const subs: NavItem[] = [
     { to: `/projects/${id}`, label: "概览" as MsgKey, icon: LayoutDashboard, raw: true, exact: true },
     { to: `/projects/${id}/chat`, label: "对话" as MsgKey, icon: MessagesSquare, raw: true, badge: unread },
+    { to: `/projects/${id}/board`, label: "看板" as MsgKey, icon: KanbanSquare, raw: true },
     { to: `/projects/${id}/agents`, label: "Agent" as MsgKey, icon: Bot, raw: true },
   ];
   return (
@@ -149,7 +159,7 @@ export function Sidebar({ collapsed, onToggle, extra }: { collapsed: boolean; on
       <nav className="flex-1 overflow-y-auto">
         <div className="space-y-0.5">
           <NavLink item={{ to: "/", label: "nav.home", icon: Home }} collapsed={collapsed} />
-          <NavLink item={{ to: "/inbox", label: "nav.inbox", icon: Inbox }} collapsed={collapsed} />
+          <InboxNav collapsed={collapsed} />
         </div>
         <ProjectNav collapsed={collapsed} />
         {extra}
@@ -299,6 +309,8 @@ export function AppShell({ title, children, sidebarExtra }: { title?: ReactNode;
   const navigate = useNavigate();
   const path = useRouterState({ select: (s) => s.location.pathname });
   const bleed = /^\/projects\/[^/]+\/chat/.test(path);
+  // Board and inbox fill the viewport and scroll inside their own panes.
+  const fill = /^\/projects\/[^/]+\/board$|^\/inbox$/.test(path);
   useEffect(() => {
     let g = false;
     const on = (e: KeyboardEvent) => {
@@ -332,7 +344,7 @@ export function AppShell({ title, children, sidebarExtra }: { title?: ReactNode;
           })
         }
       />
-      <div className={cn("flex min-w-0 flex-1 flex-col", bleed ? "overflow-hidden" : "overflow-y-auto")}>
+      <div className={cn("flex min-w-0 flex-1 flex-col", bleed || fill ? "overflow-hidden" : "overflow-y-auto")}>
         <ConnectionBar />
         <header className="sticky top-0 z-20 flex h-12 items-center gap-3 border-b bg-background/85 px-4 backdrop-blur">
           <div className="min-w-0 flex-1 truncate text-sm text-muted-foreground">{title}</div>
@@ -352,7 +364,7 @@ export function AppShell({ title, children, sidebarExtra }: { title?: ReactNode;
           <ThemeMenu />
           <UserMenu />
         </header>
-        <main className={bleed ? "flex min-h-0 flex-1" : "mx-auto w-full max-w-[1400px] flex-1 px-6 py-6"}>{children}</main>
+        <main className={bleed ? "flex min-h-0 flex-1" : fill ? "flex min-h-0 w-full flex-1 flex-col px-6 pt-6 pb-3" : "mx-auto w-full max-w-[1400px] flex-1 px-6 py-6"}>{children}</main>
       </div>
       <CommandPalette open={cmd} onOpenChange={setCmd} />
     </div>

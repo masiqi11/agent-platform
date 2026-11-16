@@ -157,3 +157,22 @@
     background-position: 200% 0;
   }
 }
+
+/* Board: a refused drop shakes the card back into place (§13.3). */
+@keyframes shake {
+  0%,
+  100% {
+    transform: translateX(0);
+  }
+  25% {
+    transform: translateX(-4px);
+  }
+  75% {
+    transform: translateX(4px);
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  [class*="animate-[shake"] {
+    animation: none !important;
+  }
+}

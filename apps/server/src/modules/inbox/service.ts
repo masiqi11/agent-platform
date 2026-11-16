@@ -1,7 +1,7 @@
 import type { DomainEvent } from "@ap/shared";
 import { and, desc, eq, inArray, isNull, sql, type SQL } from "drizzle-orm";
 import type { Database } from "../../db";
-import { appUser, chatGroup, groupMember, inboxItem, principal, project, projectMember, proposal, task } from "../../db/schema";
+import { appUser, chatGroup, groupMember, inboxItem, message, principal, project, projectMember, proposal, task } from "../../db/schema";
 import type { Ctx } from "../../core/context";
 import type { Consumer, Events } from "../../core/events";
 import { newId } from "../../core/ids";
@@ -199,8 +199,8 @@ export function createInbox(d: InboxDeps) {
               kind: "escalation",
               refType: "task",
               refId: (p.taskId as string) ?? "",
-              groupKey: `escalation:${(p.taskId as string) ?? e.aggregateId}:${String(p.level ?? 1)}`,
-              title: `升级（L${String(p.level ?? 1)}）：${(p.reason as string) ?? ""} · ${ref}`,
+              groupKey: `escalation:${(p.taskId as string) ?? e.aggregateId}:${String(typeof p.level === "number" ? p.level : 1)}`,
+              title: `升级（L${String(typeof p.level === "number" ? p.level : 1)}）：${(p.reason as string) ?? ""} · ${ref}`,
               projectId,
             })),
           );
@@ -258,9 +258,22 @@ export function createInbox(d: InboxDeps) {
       .select({ n: sql<number>`count(*)::int` })
       .from(inboxItem)
       .where(and(eq(inboxItem.principalId, ctx.actor.principalId), isNull(inboxItem.readAt)));
+    // Deep links so the inbox can jump straight to the message/card (§13.3 收件箱 → 定位).
+    const msgIds = rows.filter((r) => r.i.refType === "message").map((r) => r.i.refId);
+    const prpIds = rows.filter((r) => r.i.refType === "proposal").map((r) => r.i.refId);
+    const prps = prpIds.length ? await db.root.select({ id: proposal.id, messageId: proposal.messageId }).from(proposal).where(inArray(proposal.id, prpIds)) : [];
+    const allMsg = [...msgIds, ...prps.map((p) => p.messageId).filter((x): x is string => Boolean(x))];
+    const msgs = allMsg.length ? await db.root.select({ id: message.id, groupId: message.groupId, seq: message.seq }).from(message).where(inArray(message.id, allMsg)) : [];
+    const byMsg = new Map(msgs.map((m) => [m.id, m]));
+    const byPrp = new Map(prps.map((p) => [p.id, p.messageId ? byMsg.get(p.messageId) : undefined]));
+    const linkFor = (i: typeof inboxItem.$inferSelect) => {
+      const m = i.refType === "message" ? byMsg.get(i.refId) : i.refType === "proposal" ? byPrp.get(i.refId) : undefined;
+      return m ? { groupId: m.groupId, seq: Number(m.seq) } : null;
+    };
     return {
       unread: c?.n ?? 0,
       items: rows.map(({ i, projectName, projectKey }) => ({
+        link: linkFor(i),
         id: i.id,
         kind: i.kind,
         refType: i.refType,

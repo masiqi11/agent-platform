@@ -52,6 +52,7 @@ const InboxSchema = t.Object({
       projectKey: t.Union([t.String(), t.Null()]),
       read: t.Boolean(),
       updatedAt: t.String(),
+      link: t.Union([t.Object({ groupId: t.String(), seq: t.Number() }), t.Null()]),
     }),
   ),
 });

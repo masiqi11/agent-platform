@@ -91,7 +91,8 @@ export function createChat(d: ChatDeps) {
     const body = input.body.replace(/\r\n/g, "\n");
     if (!body.trim() && !input.attachmentIds?.length) throw invalid("消息不能为空", [{ path: "/body", message: "不能为空" }]);
     if (body.length > MAX_MESSAGE_CHARS) throw new DomainError("too_large", `消息超过 ${MAX_MESSAGE_CHARS} 字，请改为附件上传`);
-    if (ctx.actor.kind === "human") await d.rateLimiter.hit("message", ctx.actor.principalId);
+    // System cards (proposal/task cards) are side effects of another rate-limited action.
+    if (ctx.actor.kind === "human" && input.source !== "system") await d.rateLimiter.hit("message", ctx.actor.principalId);
 
     const cands = await candidates(g);
     const m = parseMentions(body, cands);
@@ -356,7 +357,7 @@ export function createChat(d: ChatDeps) {
     await db.tx(async (q) => {
       await q
         .update(message)
-        .set({ blocks: { ...(m.blocks ?? {}), ...blocks }, ...(body ? { body, tokens: sql`to_tsvector('simple', ${tokensForIndex(body)})` } : {}) })
+        .set({ blocks: { ...m.blocks, ...blocks }, ...(body ? { body, tokens: sql`to_tsvector('simple', ${tokensForIndex(body)})` } : {}) })
         .where(eq(message.id, id));
       await d.events.emit(ctx, { type: "message.updated", aggregateType: "message", aggregateId: id, payload: { projectId: g!.projectId, groupId: g!.id, messageId: id, seq: m.seq } });
     });

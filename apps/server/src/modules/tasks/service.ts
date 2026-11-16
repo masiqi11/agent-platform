@@ -39,6 +39,7 @@ import type { Events } from "../../core/events";
 import { newId } from "../../core/ids";
 import type { Identity } from "../identity/service";
 import type { Projects } from "../projects/service";
+import type { Chat } from "../chat/service";
 
 type TaskRow = typeof task.$inferSelect;
 type Priority = TaskRow["priority"];
@@ -50,6 +51,8 @@ export interface TaskDeps {
   events: Events;
   identity: Identity;
   projects: Projects;
+  /** Posts the task card into the originating group (§13.3 群聊里的任务卡). */
+  chat?: Pick<Chat, "send">;
 }
 
 export interface CreateTaskInput {
@@ -339,7 +342,14 @@ export function createTasks(d: TaskDeps) {
       });
       return t!;
     });
-    return (await present(ctx, [row]))[0]!;
+    const out = (await present(ctx, [row]))[0]!;
+    if (row.groupId && d.chat) {
+      // The card is a projection; a failure to post it must not undo the created task.
+      await d.chat
+        .send(ctx, { groupId: row.groupId, kind: "task_card", source: "system", body: `【任务 ${out.ref}】${out.title}`, blocks: { taskId: id, ref: out.ref, title: out.title } })
+        .catch(() => undefined);
+    }
+    return out;
   }
 
   async function get(ctx: Ctx, id: string) {

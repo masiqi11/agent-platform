@@ -1,7 +1,11 @@
-import { CornerUpLeft, FileText, ListTree, MoreHorizontal, Paperclip, Pencil, RotateCcw, Trash2 } from "lucide-react";
-import { memo } from "react";
+import { CornerUpLeft, FileText, ListTodo, ListTree, MoreHorizontal, Paperclip, Pencil, RotateCcw, Trash2 } from "lucide-react";
+import { memo, useState } from "react";
 import { PrincipalAvatar } from "@/components/agent-avatar";
 import { Markdown } from "@/components/markdown";
+import { ProposalPanel } from "@/components/proposal-panel";
+import { StatusPill } from "@/components/task-bits";
+import { Link } from "@tanstack/react-router";
+import { useTask } from "@/lib/tasks";
 import { Button } from "@/components/ui/button";
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
 import { api, unwrap } from "@/lib/api";
@@ -22,6 +26,7 @@ export interface MessageActions {
   onEdit(m: Msg): void;
   onDelete(m: Msg): void;
   onThread(m: Msg): void;
+  onCreateTask(m: Msg): void;
   onRetry(m: Msg): void;
 }
 
@@ -40,6 +45,7 @@ export const MessageItem = memo(function MessageItem({
   highlight,
   meId,
   canModerate,
+  canDecide,
   mentionNames,
   projectKey,
   actions,
@@ -49,6 +55,7 @@ export const MessageItem = memo(function MessageItem({
   highlight: boolean;
   meId: string;
   canModerate: boolean;
+  canDecide: boolean;
   mentionNames: string[];
   projectKey: string;
   actions: MessageActions;
@@ -56,7 +63,8 @@ export const MessageItem = memo(function MessageItem({
   const isAgent = m.author.kind === "agent";
   const own = m.author.principalId === meId;
   const card = CARD[m.kind];
-  const editable = own && !isAgent && !m.deleted && !m.pending && Date.now() - new Date(m.createdAt).getTime() < 15 * 60_000;
+  const [mountedAt] = useState(() => Date.now()); // edit window evaluated at render start (stable)
+  const editable = own && !isAgent && !m.deleted && !m.pending && mountedAt - new Date(m.createdAt).getTime() < 15 * 60_000;
   const deletable = !m.deleted && !m.pending && (own || canModerate);
   const mentionsMe = m.mentions.includes(meId);
   return (
@@ -107,7 +115,13 @@ export const MessageItem = memo(function MessageItem({
               <FileText className="size-3.5" /> {card.label}
               {typeof m.blocks?.title === "string" ? <span className="normal-case tracking-normal text-foreground">· {m.blocks.title}</span> : null}
             </p>
-            <Markdown text={m.body} mentionNames={mentionNames} projectKey={projectKey} />
+            {m.kind === "proposal_card" && typeof m.blocks?.proposalId === "string" ? (
+              <ProposalPanel proposalId={m.blocks.proposalId} canDecide={canDecide} compact />
+            ) : m.kind === "task_card" && typeof m.blocks?.taskId === "string" ? (
+              <TaskCardInline taskId={m.blocks.taskId} />
+            ) : (
+              <Markdown text={m.body} mentionNames={mentionNames} projectKey={projectKey} />
+            )}
           </div>
         ) : (
           <Markdown text={m.body} mentionNames={mentionNames} projectKey={projectKey} />
@@ -141,6 +155,11 @@ export const MessageItem = memo(function MessageItem({
           <Button variant="ghost" size="icon" className="size-7" aria-label="开线程" onClick={() => actions.onThread(m)}>
             <ListTree className="size-3.5" />
           </Button>
+          {canDecide && m.kind === "text" && (
+            <Button variant="ghost" size="icon" className="size-7" aria-label="转为任务" title="转为任务" onClick={() => actions.onCreateTask(m)}>
+              <ListTodo className="size-3.5" />
+            </Button>
+          )}
           {(editable || deletable) && (
             <DropdownMenu>
               <DropdownMenuTrigger asChild>
@@ -167,3 +186,20 @@ export const MessageItem = memo(function MessageItem({
     </div>
   );
 });
+
+/** Task card in the timeline: always shows the live status, not the status at posting time. */
+function TaskCardInline({ taskId }: { taskId: string }) {
+  const t = useTask(taskId);
+  if (t.isPending) return <div className="h-10 animate-pulse rounded bg-muted/60" />;
+  if (t.error) return <p className="text-sm text-muted-foreground">任务不可见或已删除</p>;
+  return (
+    <div className="flex items-center gap-2 text-sm" data-testid="task-card-inline">
+      <span className="font-mono text-xs text-muted-foreground">{t.data.ref}</span>
+      <Link to="/projects/$projectId/tasks/$taskId" params={{ projectId: t.data.projectId, taskId }} className="min-w-0 flex-1 truncate font-medium hover:underline">
+        {t.data.title}
+      </Link>
+      <StatusPill status={t.data.status} />
+      {t.data.assignee && <span className="text-xs text-agent">{t.data.assignee.name}</span>}
+    </div>
+  );
+}

@@ -1,5 +1,5 @@
 import { useQuery } from "@tanstack/react-query";
-import { useNavigate } from "@tanstack/react-router";
+import { Link, useNavigate } from "@tanstack/react-router";
 import { useVirtualizer } from "@tanstack/react-virtual";
 import { ArrowDown, Hash, ListTree, Loader2, MessagesSquare, Plus, Search, X } from "lucide-react";
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
@@ -19,6 +19,8 @@ import { realtime } from "@/lib/realtime";
 import { cn } from "@/lib/utils";
 import { Composer, type MemberLite } from "./composer";
 import { MessageItem, type MessageActions } from "./message-item";
+import { CreateTaskDialog, StatusPill } from "@/components/task-bits";
+import { useTasks } from "@/lib/tasks";
 import { catchUp, loadInitial, loadOlder, patch, refreshOne, upsertConfirmed, type Msg, type TimelineState } from "./timeline-store";
 
 type Row = { key: string; type: "date"; label: string } | { key: string; type: "unread" } | { key: string; type: "msg"; m: Msg; compact: boolean };
@@ -97,6 +99,7 @@ export function ChatPage({ projectId, groupId: gParam, seq, threadId }: { projec
           group={group}
           seq={seq}
           canModerate={p.myRole === "maintainer" || p.canManage}
+          canDecide={p.myRole !== "viewer" && p.status !== "archived"}
           readOnlyReason={
             p.status === "archived" ? "项目已归档，只读" : group.status !== "active" ? "群已归档，只读" : p.myRole === "viewer" ? "访客只能查看，不能发言" : !group.member ? "你不是本群成员" : null
           }
@@ -322,6 +325,7 @@ function ConversationColumn({
   group,
   seq,
   canModerate,
+  canDecide,
   readOnlyReason,
 }: {
   projectId: string;
@@ -329,6 +333,7 @@ function ConversationColumn({
   group: Group;
   seq?: number;
   canModerate: boolean;
+  canDecide: boolean;
   readOnlyReason: string | null;
 }) {
   const groupId = group.id;
@@ -340,6 +345,7 @@ function ConversationColumn({
   const [editing, setEditing] = useState<Msg | null>(null);
   const [deleting, setDeleting] = useState<Msg | null>(null);
   const [threadOf, setThreadOf] = useState<Msg | null>(null);
+  const [taskFrom, setTaskFrom] = useState<Msg | null>(null);
   const [loadingOlder, setLoadingOlder] = useState(false);
   const [atBottom, setAtBottom] = useState(true);
   const [newBelow, setNewBelow] = useState(0);
@@ -507,6 +513,7 @@ function ConversationColumn({
       onEdit: setEditing,
       onDelete: setDeleting,
       onThread: setThreadOf,
+      onCreateTask: setTaskFrom,
       onRetry: (m) => {
         const pl = m.clientId ? payloads.current.get(m.clientId) : undefined;
         void send(pl?.body ?? m.body, pl?.attachmentIds ?? [], pl?.replyToId, m);
@@ -574,6 +581,7 @@ function ConversationColumn({
                         highlight={Boolean(timeline.data.highlight) && r.m.seq === focusSeq}
                         meId={meId}
                         canModerate={canModerate}
+                        canDecide={canDecide}
                         mentionNames={mentionNames}
                         projectKey={projectKey}
                         actions={actions}
@@ -595,6 +603,22 @@ function ConversationColumn({
         >
           <ArrowDown className="size-3.5" /> {newBelow} 条新消息
         </button>
+      )}
+      {taskFrom && (
+        <CreateTaskDialog
+          projectId={projectId}
+          open
+          onClose={() => setTaskFrom(null)}
+          seed={{
+            title: taskFrom.body
+              .split("\n")[0]!
+              .replace(/@\S+\s*/g, "")
+              .slice(0, 80),
+            description: taskFrom.body,
+            groupId,
+            sourceMessageIds: [taskFrom.id],
+          }}
+        />
       )}
       <Composer
         key={groupId}
@@ -744,7 +768,7 @@ function RightColumn({ groupId, threadId, projectId }: { groupId: string; thread
             <EmptyState title="暂无决策" body="被确认的决策会沉淀到这里，并同步到知识库。" />
           </TabsContent>
           <TabsContent value="tasks">
-            <EmptyState title="暂无关联任务" body="从本群提议并确认的任务会显示在这里。" />
+            <GroupTasks projectId={projectId} groupId={groupId} />
           </TabsContent>
           <TabsContent value="members" className="space-y-4">
             {members.isPending ? (
@@ -843,5 +867,27 @@ function ThreadPanel({ groupId, threadId, onClose }: { groupId: string; threadId
         </Button>
       </div>
     </div>
+  );
+}
+
+function GroupTasks({ projectId, groupId }: { projectId: string; groupId: string }) {
+  const q = useTasks(projectId, { groupId });
+  if (q.isPending) return <PageSkeleton rows={3} />;
+  if (q.error) return <ErrorState error={q.error} onRetry={() => void q.refetch()} />;
+  if (q.data.length === 0) return <EmptyState title="暂无关联任务" body="从本群提议并确认的任务会显示在这里。" />;
+  return (
+    <ul className="space-y-1.5" data-testid="group-tasks">
+      {q.data.map((t) => (
+        <li key={t.id}>
+          <Link to="/projects/$projectId/tasks/$taskId" params={{ projectId, taskId: t.id }} className="block rounded-lg border bg-card px-2.5 py-2 hover:border-ring/50">
+            <span className="flex items-center gap-1.5">
+              <span className="font-mono text-[11px] text-muted-foreground">{t.ref}</span>
+              <StatusPill status={t.status} className="ml-auto" />
+            </span>
+            <span className="mt-0.5 line-clamp-2 block text-sm">{t.title}</span>
+          </Link>
+        </li>
+      ))}
+    </ul>
   );
 }
