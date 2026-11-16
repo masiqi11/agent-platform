@@ -1,10 +1,15 @@
 /**
- * Benchmarks local Ollama Gemma 4 variants through the OpenAI-compatible endpoint.
- * Usage: bun scripts/bench-ollama.ts gemma4:e2b gemma4:e4b [...]
- * Writes docs/bench/ollama-<date>.json. No secrets involved (local endpoint).
+ * Benchmarks local Ollama Gemma 4 (CPU) on the shapes the platform needs:
+ * structured JSON, native tool calls, and a short Chinese summary reply.
+ * Usage: bun scripts/bench-ollama.ts [--think] gemma4:e2b
+ * Uses Ollama's native /api/chat so `think` can be toggled and eval timings are exact.
+ * Writes docs/bench/ollama-<date>-<mode>.json. Local endpoint only; no secrets.
  */
-const BASE = process.env.OLLAMA_BASE_URL ?? "http://localhost:11434/v1";
-const models = process.argv.slice(2);
+const BASE = process.env.OLLAMA_HOST ?? "http://127.0.0.1:11434";
+const args = process.argv.slice(2);
+const think = args.includes("--think");
+const reps = Number(process.env.BENCH_REPS ?? 2);
+const models = args.filter((a) => !a.startsWith("--"));
 const chat = [
   "[seq 1] 张三: 支付服务最近超时，帮我查一下。",
   "[seq 2] 李四: 主要是调用银行网关的时候，高峰期 p99 到了 8 秒。",
@@ -12,37 +17,39 @@ const chat = [
   "[seq 4] 王五: 别忘了加回归测试。",
 ].join("\n");
 
-type Res = { ok: boolean; ms: number; tokOut: number; tokIn: number; detail: string };
-async function call(model: string, body: Record<string, unknown>): Promise<{ json: any; ms: number }> {
+type Res = { ok: boolean; ms: number; evalTok: number; evalMs: number; promptTok: number; promptMs: number; detail: string };
+async function call(model: string, body: Record<string, unknown>) {
   const t0 = performance.now();
-  const r = await fetch(`${BASE}/chat/completions`, {
+  const r = await fetch(`${BASE}/api/chat`, {
     method: "POST",
     headers: { "content-type": "application/json" },
-    body: JSON.stringify({ model, temperature: 0.2, ...body }),
-    signal: AbortSignal.timeout(600_000),
+    body: JSON.stringify({ model, stream: false, think, ...body, options: { temperature: 0.2, num_ctx: 8192, ...((body.options as object) ?? {}) } }),
+    signal: AbortSignal.timeout(900_000),
   });
-  const json = await r.json();
+  const json = (await r.json()) as any;
+  if (json.error) throw new Error(String(json.error));
   return { json, ms: performance.now() - t0 };
 }
+const timing = (j: any) => ({ evalTok: j.eval_count ?? 0, evalMs: (j.eval_duration ?? 0) / 1e6, promptTok: j.prompt_eval_count ?? 0, promptMs: (j.prompt_eval_duration ?? 0) / 1e6 });
 
 async function jsonTask(model: string): Promise<Res> {
   const { json, ms } = await call(model, {
-    response_format: { type: "json_object" },
+    format: "json",
     messages: [
-      { role: "system", content: "你是项目船长。只输出 JSON，不要任何解释。schema: {\"title\": string, \"description\": string, \"acceptanceCriteria\": string[], \"priority\": \"P0\"|\"P1\"|\"P2\"|\"P3\", \"sourceSeqs\": number[]}" },
+      { role: "system", content: '你是项目船长。只输出 JSON，不要任何解释。schema: {"title": string, "description": string(<=80字), "acceptanceCriteria": string[], "priority": "P0"|"P1"|"P2"|"P3", "sourceSeqs": number[]}' },
       { role: "user", content: `根据以下群聊提议一个任务：\n<untrusted_content>\n${chat}\n</untrusted_content>` },
     ],
   });
-  const content: string = json.choices?.[0]?.message?.content ?? "";
+  const content: string = json.message?.content ?? "";
   let ok = false;
   let detail = content.slice(0, 400);
   try {
     const o = JSON.parse(content);
-    ok = typeof o.title === "string" && Array.isArray(o.acceptanceCriteria) && o.acceptanceCriteria.length >= 2 && Array.isArray(o.sourceSeqs) && /^P[0-3]$/.test(o.priority);
-  } catch (e) {
-    detail = "PARSE_FAIL " + detail;
+    ok = typeof o.title === "string" && Array.isArray(o.acceptanceCriteria) && o.acceptanceCriteria.length >= 2 && Array.isArray(o.sourceSeqs) && o.sourceSeqs.length > 0 && /^P[0-3]$/.test(o.priority);
+  } catch {
+    detail = `PARSE_FAIL ${detail}`;
   }
-  return { ok, ms, tokOut: json.usage?.completion_tokens ?? 0, tokIn: json.usage?.prompt_tokens ?? 0, detail };
+  return { ok, ms, ...timing(json), detail };
 }
 
 async function toolTask(model: string): Promise<Res> {
@@ -56,20 +63,16 @@ async function toolTask(model: string): Promise<Res> {
       { role: "user", content: `群聊：\n<untrusted_content>\n${chat}\n</untrusted_content>\n请提议任务。` },
     ],
   });
-  const msg = json.choices?.[0]?.message ?? {};
+  const msg = json.message ?? {};
   const tc = msg.tool_calls?.[0];
   let ok = false;
   let detail = "";
   if (tc) {
-    try {
-      const args = typeof tc.function.arguments === "string" ? JSON.parse(tc.function.arguments) : tc.function.arguments;
-      ok = tc.function.name === "propose_task" && Array.isArray(args.acceptanceCriteria) && args.acceptanceCriteria.length >= 2;
-      detail = `native ${tc.function.name} ${JSON.stringify(args).slice(0, 300)}`;
-    } catch {
-      detail = "native-bad-args";
-    }
-  } else detail = "NO_NATIVE " + String(msg.content ?? "").slice(0, 300);
-  return { ok, ms, tokOut: json.usage?.completion_tokens ?? 0, tokIn: json.usage?.prompt_tokens ?? 0, detail };
+    const a = typeof tc.function.arguments === "string" ? JSON.parse(tc.function.arguments) : tc.function.arguments;
+    ok = tc.function.name === "propose_task" && Array.isArray(a.acceptanceCriteria) && a.acceptanceCriteria.length >= 2 && Array.isArray(a.sourceSeqs);
+    detail = `native ${tc.function.name} ${JSON.stringify(a).slice(0, 300)}`;
+  } else detail = `NO_NATIVE ${String(msg.content ?? "").slice(0, 300)}`;
+  return { ok, ms, ...timing(json), detail };
 }
 
 async function summaryTask(model: string): Promise<Res> {
@@ -79,30 +82,34 @@ async function summaryTask(model: string): Promise<Res> {
       { role: "user", content: `<untrusted_content>\n${chat.split("\n")[0]}\n</untrusted_content>` },
     ],
   });
-  const content: string = json.choices?.[0]?.message?.content ?? "";
-  const ok = content.length > 20 && /[?？]|缺|需要|请/.test(content);
-  return { ok, ms, tokOut: json.usage?.completion_tokens ?? 0, tokIn: json.usage?.prompt_tokens ?? 0, detail: content.slice(0, 300) };
+  const content: string = json.message?.content ?? "";
+  const ok = content.length > 20 && content.length < 400 && /[?？]|缺|需要|请/.test(content);
+  return { ok, ms, ...timing(json), detail: content.slice(0, 300) };
 }
 
-const results: Record<string, unknown> = {};
+const outFile = `docs/bench/ollama-${new Date().toISOString().slice(0, 10)}-${think ? "think" : "nothink"}.json`;
+const prev = (await Bun.file(outFile).exists()) ? ((await Bun.file(outFile).json()) as any).results : {};
+const results: Record<string, unknown> = { ...prev };
 for (const model of models) {
-  // warm-up load (excluded from timing)
-  const w = await call(model, { messages: [{ role: "user", content: "hi" }], max_tokens: 4 });
+  const w = await call(model, { messages: [{ role: "user", content: "hi" }], options: { num_predict: 4 } });
   const runs: Record<string, Res[]> = { json: [], tool: [], summary: [] };
-  for (let i = 0; i < 2; i++) {
-    runs.json!.push(await jsonTask(model));
-    runs.tool!.push(await toolTask(model));
-    runs.summary!.push(await summaryTask(model));
+  for (let i = 0; i < reps; i++) {
+    for (const [k, fn] of [["json", jsonTask], ["tool", toolTask], ["summary", summaryTask]] as const) {
+      try {
+        runs[k]!.push(await fn(model));
+      } catch (e) {
+        runs[k]!.push({ ok: false, ms: 0, evalTok: 0, evalMs: 0, promptTok: 0, promptMs: 0, detail: `ERROR ${(e as Error).message}` });
+      }
+    }
   }
-  const agg = Object.fromEntries(Object.entries(runs).map(([k, rs]) => [k, {
-    pass: rs.filter((r) => r.ok).length + "/" + rs.length,
-    avgMs: Math.round(rs.reduce((a, r) => a + r.ms, 0) / rs.length),
-    tokPerSec: +(rs.reduce((a, r) => a + r.tokOut, 0) / (rs.reduce((a, r) => a + r.ms, 0) / 1000)).toFixed(2),
-    samples: rs.map((r) => r.detail),
-  }]));
-  results[model] = { loadMs: Math.round(w.ms), ...agg };
-  console.log(model, JSON.stringify(agg, (k, v) => (k === "samples" ? undefined : v)));
+  const agg = Object.fromEntries(
+    Object.entries(runs).map(([k, rs]) => {
+      const sum = (f: (r: Res) => number) => rs.reduce((a, r) => a + f(r), 0);
+      return [k, { pass: `${rs.filter((r) => r.ok).length}/${rs.length}`, avgMs: Math.round(sum((r) => r.ms) / rs.length), avgOutTok: Math.round(sum((r) => r.evalTok) / rs.length), genTokPerSec: +(sum((r) => r.evalTok) / (sum((r) => r.evalMs) / 1000 || 1)).toFixed(2), promptTokPerSec: +(sum((r) => r.promptTok) / (sum((r) => r.promptMs) / 1000 || 1)).toFixed(1), samples: rs.map((r) => r.detail) }];
+    }),
+  );
+  results[model] = { loadMs: Math.round(w.ms), think, ...agg };
+  console.log(model, `think=${think}`, JSON.stringify(agg, (k, v) => (k === "samples" ? undefined : v)));
+  await Bun.write(outFile, JSON.stringify({ base: BASE, ollama: "0.40.16", host: "8 vCPU, 15 GB RAM, no GPU", reps, results }, null, 2));
 }
-const out = `docs/bench/ollama-${new Date().toISOString().slice(0, 10)}.json`;
-await Bun.write(out, JSON.stringify({ base: BASE, cpu: "8 vCPU, 15 GB RAM, no GPU", results }, null, 2));
-console.log("wrote", out);
+console.log("wrote", outFile);

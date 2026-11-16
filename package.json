@@ -16,7 +16,7 @@
     "seed": "bun --cwd apps/server src/cli/seed.ts",
     "audit:verify": "bun --cwd apps/server src/cli/audit-verify.ts",
     "start": "bun --cwd apps/server src/main.ts",
-    "e2e": "bun --cwd apps/web playwright test"
+    "e2e": "cd apps/web && bun x --no-install playwright test"
   },
   "devDependencies": {
     "turbo": "2.11.11",

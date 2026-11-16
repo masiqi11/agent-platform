@@ -227,7 +227,7 @@ export function createIdentity(d: IdentityDeps) {
   }
 
   /** Change role / disable. Disabling revokes all sessions immediately (§9.4). */
-  async function updateUser(ctx: Ctx, userId: string, patch: { tenantRole?: TenantRole; status?: "active" | "disabled"; successorPrincipalId?: string }) {
+  async function updateUser(ctx: Ctx, userId: string, patch: { tenantRole?: TenantRole; status?: "active" | "disabled"; successorPrincipalId?: string; reason?: string }) {
     await require(ctx, "admin.users");
     const [u] = await db.root.select().from(appUser).where(and(eq(appUser.id, userId), eq(appUser.tenantId, ctx.tenantId)));
     if (!u) throw notFound("用户");

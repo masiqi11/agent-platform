@@ -1,0 +1,155 @@
+@import "tailwindcss";
+
+/* Dark mode is driven by a `.dark` class on <html> (system default, user override). */
+@custom-variant dark (&:where(.dark, .dark *));
+
+/*
+ * Design tokens (§13.2 / §13.7). Components never hard-code colours; they use these.
+ * Palette: warm paper neutrals + a deep "harbour" teal accent, with an amber signal colour
+ * for things that need a human. Avoids the stock white-card + default-blue admin look.
+ */
+:root {
+  --radius: 0.5rem;
+
+  --background: oklch(0.985 0.004 85);
+  --foreground: oklch(0.22 0.012 250);
+  --card: oklch(1 0 0);
+  --card-foreground: var(--foreground);
+  --popover: oklch(1 0 0);
+  --popover-foreground: var(--foreground);
+  --primary: oklch(0.45 0.085 200);
+  --primary-foreground: oklch(0.98 0.01 200);
+  --secondary: oklch(0.955 0.006 85);
+  --secondary-foreground: var(--foreground);
+  --muted: oklch(0.955 0.006 85);
+  --muted-foreground: oklch(0.47 0.015 250);
+  --accent: oklch(0.94 0.02 200);
+  --accent-foreground: oklch(0.3 0.06 200);
+  --destructive: oklch(0.55 0.2 27);
+  --border: oklch(0.905 0.008 85);
+  --input: oklch(0.88 0.008 85);
+  --ring: oklch(0.55 0.09 200);
+
+  --sidebar: oklch(0.965 0.006 85);
+  --sidebar-foreground: var(--foreground);
+  --sidebar-active: oklch(0.92 0.025 200);
+
+  /* Semantic signals: status, priority and actor kind. Always paired with text or icon. */
+  --signal-attention: oklch(0.72 0.15 70);
+  --signal-attention-soft: oklch(0.96 0.045 85);
+  --signal-ok: oklch(0.55 0.12 155);
+  --signal-ok-soft: oklch(0.95 0.04 155);
+  --signal-danger: oklch(0.55 0.2 27);
+  --signal-danger-soft: oklch(0.95 0.035 27);
+  --signal-info: oklch(0.52 0.1 245);
+  --signal-info-soft: oklch(0.95 0.025 245);
+  --signal-idle: oklch(0.6 0.01 250);
+  --signal-idle-soft: oklch(0.94 0.005 250);
+  --agent: oklch(0.5 0.12 295);
+  --agent-soft: oklch(0.95 0.03 295);
+}
+
+.dark {
+  --background: oklch(0.175 0.01 250);
+  --foreground: oklch(0.93 0.008 85);
+  --card: oklch(0.215 0.012 250);
+  --card-foreground: var(--foreground);
+  --popover: oklch(0.235 0.012 250);
+  --popover-foreground: var(--foreground);
+  --primary: oklch(0.74 0.1 195);
+  --primary-foreground: oklch(0.2 0.03 200);
+  --secondary: oklch(0.26 0.012 250);
+  --secondary-foreground: var(--foreground);
+  --muted: oklch(0.255 0.012 250);
+  --muted-foreground: oklch(0.7 0.012 250);
+  --accent: oklch(0.3 0.04 200);
+  --accent-foreground: oklch(0.9 0.04 195);
+  --destructive: oklch(0.65 0.19 25);
+  --border: oklch(0.3 0.012 250);
+  --input: oklch(0.34 0.012 250);
+  --ring: oklch(0.7 0.1 195);
+
+  --sidebar: oklch(0.155 0.01 250);
+  --sidebar-foreground: var(--foreground);
+  --sidebar-active: oklch(0.27 0.035 200);
+
+  --signal-attention: oklch(0.8 0.14 75);
+  --signal-attention-soft: oklch(0.3 0.06 75);
+  --signal-ok: oklch(0.75 0.13 155);
+  --signal-ok-soft: oklch(0.28 0.05 155);
+  --signal-danger: oklch(0.7 0.17 25);
+  --signal-danger-soft: oklch(0.3 0.07 25);
+  --signal-info: oklch(0.75 0.1 245);
+  --signal-info-soft: oklch(0.28 0.05 245);
+  --signal-idle: oklch(0.65 0.01 250);
+  --signal-idle-soft: oklch(0.27 0.008 250);
+  --agent: oklch(0.76 0.11 295);
+  --agent-soft: oklch(0.29 0.06 295);
+}
+
+@theme inline {
+  --font-sans: "Inter", "PingFang SC", "Hiragino Sans GB", "Noto Sans CJK SC", "Microsoft YaHei", system-ui, sans-serif;
+  --font-mono: "JetBrains Mono", "SFMono-Regular", ui-monospace, Menlo, monospace;
+  --radius-sm: calc(var(--radius) - 4px);
+  --radius-md: calc(var(--radius) - 2px);
+  --radius-lg: var(--radius);
+  --radius-xl: calc(var(--radius) + 4px);
+
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --color-card: var(--card);
+  --color-card-foreground: var(--card-foreground);
+  --color-popover: var(--popover);
+  --color-popover-foreground: var(--popover-foreground);
+  --color-primary: var(--primary);
+  --color-primary-foreground: var(--primary-foreground);
+  --color-secondary: var(--secondary);
+  --color-secondary-foreground: var(--secondary-foreground);
+  --color-muted: var(--muted);
+  --color-muted-foreground: var(--muted-foreground);
+  --color-accent: var(--accent);
+  --color-accent-foreground: var(--accent-foreground);
+  --color-destructive: var(--destructive);
+  --color-border: var(--border);
+  --color-input: var(--input);
+  --color-ring: var(--ring);
+  --color-sidebar: var(--sidebar);
+  --color-sidebar-foreground: var(--sidebar-foreground);
+  --color-sidebar-active: var(--sidebar-active);
+  --color-attention: var(--signal-attention);
+  --color-attention-soft: var(--signal-attention-soft);
+  --color-ok: var(--signal-ok);
+  --color-ok-soft: var(--signal-ok-soft);
+  --color-danger: var(--signal-danger);
+  --color-danger-soft: var(--signal-danger-soft);
+  --color-info: var(--signal-info);
+  --color-info-soft: var(--signal-info-soft);
+  --color-idle: var(--signal-idle);
+  --color-idle-soft: var(--signal-idle-soft);
+  --color-agent: var(--agent);
+  --color-agent-soft: var(--agent-soft);
+}
+
+@layer base {
+  * {
+    @apply border-border outline-ring/50;
+  }
+  html {
+    color-scheme: light;
+  }
+  html.dark {
+    color-scheme: dark;
+  }
+  body {
+    @apply bg-background text-foreground antialiased;
+    font-feature-settings: "cv11", "ss01";
+  }
+  :focus-visible {
+    @apply outline-2 outline-offset-2 outline-ring;
+  }
+}
+
+@keyframes ap-shimmer {
+  from { background-position: -200% 0; }
+  to { background-position: 200% 0; }
+}

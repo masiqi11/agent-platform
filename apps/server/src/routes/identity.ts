@@ -42,7 +42,7 @@ export const identityRoutes = (s: Services) =>
     .get("/users", { response: t.Array(User) }, async ({ auth }) => s.identity.listUsers(await auth()))
     .patch(
       "/users/:id",
-      { params: t.Object({ id: t.String() }), body: t.Object({ tenantRole: t.Optional(TenantRole), status: t.Optional(t.Union([t.Literal("active"), t.Literal("disabled")])), successorPrincipalId: t.Optional(t.String()) }), response: Ok },
+      { params: t.Object({ id: t.String() }), body: t.Object({ tenantRole: t.Optional(TenantRole), status: t.Optional(t.Union([t.Literal("active"), t.Literal("disabled")])), successorPrincipalId: t.Optional(t.String()), reason: t.Optional(t.String({ maxLength: 500 })) }), response: Ok },
       async ({ auth, params, body }) => s.identity.updateUser(await auth(), params.id, body),
     )
     .post("/users/:id/reset-link", { params: t.Object({ id: t.String() }), response: t.Object({ url: t.String() }) }, async ({ auth, params }) => s.identity.resetLink(await auth(), params.id))
