@@ -11,6 +11,9 @@ import { log } from "./core/logger";
 import { traceIdOf } from "./http";
 import { auditRoutes } from "./routes/audit";
 import { identityRoutes } from "./routes/identity";
+import { projectRoutes } from "./routes/projects";
+import { chatRoutes } from "./routes/chat";
+import { agentRoutes } from "./routes/agents";
 import type { Services } from "./services";
 
 const CSP = [
@@ -113,6 +116,9 @@ export function createApp(s: Services) {
     .all("/api/auth/*", { parse: "none" }, ({ request }) => s.auth.handler(request))
     .use(identityRoutes(s))
     .use(auditRoutes(s))
+    .use(projectRoutes(s))
+    .use(chatRoutes(s))
+    .use(agentRoutes(s))
     .ws("/ws", {
       maxPayloadLength: 64 * 1024,
       idleTimeout: 120,

@@ -15,13 +15,32 @@ let tokenB = "";
 const fixtures: Record<string, string> = {};
 
 /** Routes that are intentionally public or token-addressed (the token itself is the secret). */
-const PUBLIC = new Set(["POST /api/v1/invitations/:token/accept"]);
+const PUBLIC = new Set(["POST /api/v1/invitations/:token/accept", "GET /api/v1/attachments/:id/raw"]);
+
+/** `:id` resolves by the collection segment before it (e.g. /groups/:id → a group of tenant A). */
+function fixtureFor(path: string, param: string): string | undefined {
+  if (param !== "id") return fixtures[param];
+  const seg = path.split("/");
+  const i = seg.indexOf(":id");
+  return fixtures[seg[i - 1]!];
+}
 
 beforeAll(async () => {
   t = await createTestApp("isolation");
   const a = await t.req("POST", "/api/v1/setup", { body: { tenantName: "A", email: "a@a.test", name: "A", password: PW } });
   const meA = (await t.req("GET", "/api/v1/me", { token: a.body.token })).body;
-  fixtures.id = meA.userId; // users/:id
+  fixtures.users = meA.userId;
+  fixtures.principalId = meA.principalId;
+  const proj = await t.req("POST", "/api/v1/projects", { token: a.body.token, body: { key: "ISO", name: "隔离" } });
+  fixtures.projects = proj.body.id;
+  fixtures.groups = proj.body.mainGroupId;
+  fixtures.agents = proj.body.captainAgentId;
+  const msg = await t.req("POST", `/api/v1/groups/${proj.body.mainGroupId}/messages`, { token: a.body.token, body: { body: "机密" } });
+  fixtures.messages = msg.body.message.id;
+  const fd = new FormData();
+  fd.append("file", new File(["secret"], "s.txt", { type: "text/plain" }));
+  const up = await t.app.handle(new Request(`http://localhost/api/v1/groups/${proj.body.mainGroupId}/attachments`, { method: "POST", headers: { authorization: `Bearer ${a.body.token}` }, body: fd }));
+  fixtures.attachments = ((await up.json()) as { id: string }).id;
   // Tenant B (second tenant created directly; self-host normally has one).
   const tb = newId("ten");
   await t.s.db.root.insert(tenant).values({ id: tb, name: "B", domain: "b.test" });
@@ -41,9 +60,10 @@ describe("INV-11 tenant isolation (route enumeration)", () => {
       const key = `${r.method} ${r.path}`;
       if (PUBLIC.has(key)) continue;
       const params = [...r.path.matchAll(/:(\w+)/g)].map((m) => m[1]!);
-      for (const p of params) if (!fixtures[p]) throw new Error(`no isolation fixture for param :${p} in ${key}`);
-      const path = r.path.replace(/:(\w+)/g, (_, p) => fixtures[p]!);
+      for (const p of params) if (!fixtureFor(r.path, p)) throw new Error(`no isolation fixture for param :${p} in ${key}`);
+      const path = r.path.replace(/:(\w+)/g, (_, p: string) => fixtureFor(r.path, p)!);
       const res = await t.req(r.method, path, { token: tokenB, body: r.method === "GET" ? undefined : {} });
+      if (![400, 403, 404].includes(res.status)) console.log("LEAK?", key, res.status, JSON.stringify(res.body).slice(0, 200));
       expect([400, 403, 404]).toContain(res.status);
       if (res.status === 400) expect(res.body.error).toBe("invalid"); // body validation ran before lookup; still no data
       checked.push(key);

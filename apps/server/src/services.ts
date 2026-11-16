@@ -13,6 +13,9 @@ import { createRateLimiter } from "./core/rate-limit";
 import { createIdentity } from "./modules/identity/service";
 import { createRealtime } from "./modules/realtime/service";
 import { createAuditQuery } from "./modules/audit/service";
+import { createProjects } from "./modules/projects/service";
+import { createChat } from "./modules/chat/service";
+import { createAgents } from "./modules/agents/service";
 
 export interface ServiceOptions {
   /** Worker/consumer owner id (unique per process). */
@@ -45,7 +48,11 @@ export function createServices(config: Config, opts: ServiceOptions = {}) {
   const realtime = createRealtime({ db, identity });
   const auditQuery = createAuditQuery({ db, audit, identity });
 
-  const base = { config, db, owner, events, audit, jobs, consumers, idempotency, rateLimiter, vault, objectStore, identity, auth, realtime, auditQuery, addRedactionValue };
+  const projects = createProjects({ db, audit, events, identity });
+  const chat = createChat({ config, db, audit, events, identity, projects, objectStore, rateLimiter });
+  const agents = createAgents({ db, audit, events, identity, projects });
+
+  const base = { config, db, owner, events, audit, jobs, consumers, idempotency, rateLimiter, vault, objectStore, identity, auth, realtime, auditQuery, projects, chat, agents, addRedactionValue };
   return base;
 }
 export type Services = ReturnType<typeof createServices>;
