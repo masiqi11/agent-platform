@@ -1,0 +1,40 @@
+{
+  "name": "@ap/web",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "tsc -p tsconfig.json && vite build",
+    "typecheck": "tsc -p tsconfig.json",
+    "test": "bun test --timeout 60000 src"
+  },
+  "dependencies": {
+    "@elysia/eden": "2.0.0-rc.1",
+    "@tanstack/react-query": "5.107.1",
+    "@tanstack/react-router": "1.170.46",
+    "react": "19.3.1",
+    "react-dom": "19.3.1",
+    "better-auth": "1.7.25",
+    "lucide-react": "1.73.0",
+    "clsx": "latest",
+    "tailwind-merge": "latest",
+    "class-variance-authority": "latest",
+    "radix-ui": "latest",
+    "cmdk": "latest",
+    "sonner": "latest",
+    "@tanstack/react-virtual": "latest"
+  },
+  "devDependencies": {
+    "@ap/server": "workspace:*",
+    "@ap/shared": "workspace:*",
+    "vite": "8.3.8",
+    "@vitejs/plugin-react": "6.3.0",
+    "tailwindcss": "4.3.5",
+    "@tailwindcss/vite": "4.3.5",
+    "@types/react": "latest",
+    "@types/react-dom": "latest",
+    "@playwright/test": "1.65.1",
+    "@axe-core/playwright": "latest"
+  }
+}

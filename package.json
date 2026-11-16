@@ -1,0 +1,29 @@
+{
+  "name": "agent-platform",
+  "private": true,
+  "type": "module",
+  "packageManager": "bun@1.4.4",
+  "workspaces": ["apps/*", "packages/*"],
+  "scripts": {
+    "dev": "bun scripts/dev.ts",
+    "build": "turbo build",
+    "typecheck": "turbo typecheck",
+    "lint": "oxlint --type-aware -c .oxlintrc.json apps packages && bun scripts/check-deps.ts",
+    "format": "oxfmt .",
+    "format:check": "oxfmt --check .",
+    "test": "turbo test",
+    "migrate": "bun --cwd apps/server src/cli/migrate.ts",
+    "seed": "bun --cwd apps/server src/cli/seed.ts",
+    "audit:verify": "bun --cwd apps/server src/cli/audit-verify.ts",
+    "start": "bun --cwd apps/server src/main.ts",
+    "e2e": "bun --cwd apps/web playwright test"
+  },
+  "devDependencies": {
+    "turbo": "2.11.11",
+    "typescript": "7.0.2",
+    "oxlint": "1.93.0",
+    "oxlint-tsgolint": "7.0.2007",
+    "oxfmt": "0.78.0",
+    "@types/bun": "latest"
+  }
+}
