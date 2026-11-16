@@ -70,7 +70,9 @@ async function main() {
     const bound = await s.repos.bind(ownerCtx, proj.id, { provider: "local", name: p.repo, files: p.files, testCommand: "bun test" });
     // KB-补6: the 30-question evaluation set (`bun run kb:eval`).
     const items = DEMO_EVAL.filter((q) => q.repo === p.repo);
-    await s.db.root.insert(evalQuestion).values(items.map((q) => ({ id: newId("evq"), tenantId: ownerCtx.tenantId, projectId: proj.id, question: q.question, expectedRefs: q.expect, tags: q.tags ?? ["demo"] })));
+    await s.db.root
+      .insert(evalQuestion)
+      .values(items.map((q) => ({ id: newId("evq"), tenantId: ownerCtx.tenantId, projectId: proj.id, question: q.question, expectedRefs: q.expect, tags: q.tags ?? ["demo"] })));
     console.log(`${p.key}：项目 ${proj.id}，仓库 ${bound.repo.name}（${bound.check.ok ? "检查通过" : bound.check.detail}）`);
   }
   console.log(`完成。用 ${ownerEmail} 登录；在「支付服务」主群 @船长 说“支付服务最近超时，帮我查一下”。`);
