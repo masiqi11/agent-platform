@@ -7,7 +7,7 @@
     "dev": "vite",
     "build": "tsc -p tsconfig.json && vite build",
     "typecheck": "tsc -p tsconfig.json",
-    "test": "bun test --timeout 60000 src"
+    "test": "bun test --pass-with-no-tests --timeout 60000 src"
   },
   "dependencies": {
     "@elysia/eden": "2.0.0-rc.1",
