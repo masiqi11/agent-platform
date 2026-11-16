@@ -13,6 +13,8 @@ import { auditRoutes } from "./routes/audit";
 import { identityRoutes } from "./routes/identity";
 import { projectRoutes } from "./routes/projects";
 import { chatRoutes } from "./routes/chat";
+import { taskRoutes } from "./routes/tasks";
+import { flowRoutes } from "./routes/flow";
 import { agentRoutes } from "./routes/agents";
 import type { Services } from "./services";
 
@@ -119,6 +121,8 @@ export function createApp(s: Services) {
     .use(projectRoutes(s))
     .use(chatRoutes(s))
     .use(agentRoutes(s))
+    .use(taskRoutes(s))
+    .use(flowRoutes(s))
     .ws("/ws", {
       maxPayloadLength: 64 * 1024,
       idleTimeout: 120,

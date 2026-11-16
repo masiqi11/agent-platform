@@ -16,6 +16,10 @@ import { createAuditQuery } from "./modules/audit/service";
 import { createProjects } from "./modules/projects/service";
 import { createChat } from "./modules/chat/service";
 import { createAgents } from "./modules/agents/service";
+import { createTasks } from "./modules/tasks/service";
+import { createInbox } from "./modules/inbox/service";
+import { createProposals } from "./modules/proposals/service";
+import { createApprovals } from "./modules/approvals/service";
 
 export interface ServiceOptions {
   /** Worker/consumer owner id (unique per process). */
@@ -51,8 +55,36 @@ export function createServices(config: Config, opts: ServiceOptions = {}) {
   const projects = createProjects({ db, audit, events, identity });
   const chat = createChat({ config, db, audit, events, identity, projects, objectStore, rateLimiter });
   const agents = createAgents({ db, audit, events, identity, projects });
+  const tasks = createTasks({ db, audit, events, identity, projects });
+  const inbox = createInbox({ db, events, identity });
+  const proposals = createProposals({ db, audit, events, identity, projects, chat, tasks, inbox });
+  const approvals = createApprovals({ db, audit, events, identity, projects, tasks, inbox });
 
-  const base = { config, db, owner, events, audit, jobs, consumers, idempotency, rateLimiter, vault, objectStore, identity, auth, realtime, auditQuery, projects, chat, agents, addRedactionValue };
+  const base = {
+    config,
+    db,
+    owner,
+    events,
+    audit,
+    jobs,
+    consumers,
+    idempotency,
+    rateLimiter,
+    vault,
+    objectStore,
+    identity,
+    auth,
+    realtime,
+    auditQuery,
+    projects,
+    chat,
+    agents,
+    tasks,
+    inbox,
+    proposals,
+    approvals,
+    addRedactionValue,
+  };
   return base;
 }
 export type Services = ReturnType<typeof createServices>;

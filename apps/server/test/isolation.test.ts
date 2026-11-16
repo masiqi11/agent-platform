@@ -41,6 +41,19 @@ beforeAll(async () => {
   fd.append("file", new File(["secret"], "s.txt", { type: "text/plain" }));
   const up = await t.app.handle(new Request(`http://localhost/api/v1/groups/${proj.body.mainGroupId}/attachments`, { method: "POST", headers: { authorization: `Bearer ${a.body.token}` }, body: fd }));
   fixtures.attachments = ((await up.json()) as { id: string }).id;
+  const tk = await t.req("POST", "/api/v1/tasks", { token: a.body.token, body: { projectId: proj.body.id, title: "机密任务" } });
+  fixtures.tasks = tk.body.id;
+  const sys = await t.s.identity.systemCtx(meA.tenant.id);
+  const prp = await t.s.proposals.create(sys, {
+    projectId: proj.body.id,
+    groupId: proj.body.mainGroupId,
+    kind: "create_task",
+    payload: { title: "机密提议" },
+    sourceMessageIds: [msg.body.message.id],
+  });
+  fixtures.proposals = prp.id;
+  const apv = await t.req("POST", `/api/v1/tasks/${tk.body.id}/approvals`, { token: a.body.token, body: { kind: "budget" } });
+  fixtures.approvals = apv.body.id;
   // Tenant B (second tenant created directly; self-host normally has one).
   const tb = newId("ten");
   await t.s.db.root.insert(tenant).values({ id: tb, name: "B", domain: "b.test" });

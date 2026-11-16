@@ -342,6 +342,26 @@ export function createChat(d: ChatDeps) {
     return { ok: true };
   }
 
+  /**
+   * Updates a card message's structured blocks (e.g. proposal accepted / task status) without
+   * creating an edit version: cards are system-owned views of other aggregates.
+   */
+  async function updateCard(ctx: Ctx, id: string, blocks: Record<string, unknown>, body?: string) {
+    const [m] = await db.root
+      .select()
+      .from(message)
+      .where(and(eq(message.id, id), eq(message.tenantId, ctx.tenantId)));
+    if (!m || m.kind === "text") return;
+    const [g] = await db.root.select().from(chatGroup).where(eq(chatGroup.id, m.groupId));
+    await db.tx(async (q) => {
+      await q
+        .update(message)
+        .set({ blocks: { ...(m.blocks ?? {}), ...blocks }, ...(body ? { body, tokens: sql`to_tsvector('simple', ${tokensForIndex(body)})` } : {}) })
+        .where(eq(message.id, id));
+      await d.events.emit(ctx, { type: "message.updated", aggregateType: "message", aggregateId: id, payload: { projectId: g!.projectId, groupId: g!.id, messageId: id, seq: m.seq } });
+    });
+  }
+
   /** Soft delete; seq placeholder stays (INV-21); references keep pointing at it. */
   async function remove(ctx: Ctx, id: string, reason: string) {
     const { m, g } = await messageFor(ctx, id);
@@ -596,6 +616,7 @@ export function createChat(d: ChatDeps) {
 
   return {
     send,
+    updateCard,
     timeline,
     edit,
     markCorrected,

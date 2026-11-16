@@ -41,6 +41,7 @@ export const EVENT_TYPES = [
   "merge.failed",
   "release.recorded",
   "escalation.raised",
+  "inbox.updated",
   "question.asked",
   "question.resolved",
   "budget.exceeded",
