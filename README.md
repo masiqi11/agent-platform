@@ -5,7 +5,7 @@
 
 ## 当前状态
 
-已完成阶段 S0–S5（身份/内核、项目群聊、任务看板审批收件箱、模型层与船长、代码执行链路）与 S6 主体（评审、测试、门禁、合并队列：主场景十步在脚本模型 + 本地仓库下全自动通过；真实 GitLab 实测待运行）；S7–S9（知识库、生产化、钉钉）尚未开始。详见 `docs/PROGRESS.md`。
+已完成阶段 S0–S5（身份/内核、项目群聊、任务看板审批收件箱、模型层与船长、代码执行链路）与 S6 主体（评审、测试、门禁、合并队列：主场景十步在脚本模型 + 本地仓库下全自动通过；真实 GitLab 实测待运行）；S7 知识库主体已完成（代码/文档/决策索引、三路混合检索、带引用的项目船长与全局船长跨项目问答；30 题评测 `bun run kb:eval`）；S8–S9（生产化、钉钉）尚未开始。详见 `docs/PROGRESS.md`。
 
 ## 技术栈
 
@@ -44,6 +44,7 @@ bun run dev
 | `bun run test`                                | 单元与集成测试（需要 `TEST_DATABASE_URL` 指向可建库的 Postgres）                                          |
 | `bun run e2e`                                 | Playwright 端到端（自动建临时库 `agent_platform_e2e`，需先 `bun run build`）                              |
 | `bun run seed`                                | 写入 S5 演示项目 DPAY / DBILL（本地仓库 + dev/reviewer/tester Agent；需 `DATABASE_URL`、`SEED_PASSWORD`） |
+| `bun run kb:eval`                             | 知识库评测：建索引后对演示项目 30 题算 recall@5（需 `DATABASE_URL`、`SEED_PASSWORD`；先 `bun run seed`）  |
 | `bun run --cwd apps/server seed:demo`         | 写入【演示数据】项目（需 `DATABASE_URL`、`SEED_PASSWORD`），仅用于体验与截图                              |
 | `bun run audit:verify`                        | 校验审计哈希链                                                                                            |
 
@@ -62,6 +63,7 @@ bun run dev
 - **沙箱**：开发默认 `SANDBOX=process`（子进程，无网络隔离，仅开发用）；生产必须 `SANDBOX=docker`，并设置 `SANDBOX_IMAGE`。沙箱里没有任何平台凭据，推送由控制面在沙箱外完成。
 - **体验主流程前半段**：`SEED_PASSWORD=… bun run seed` 后用 `owner@xinghe.test` 登录，在「支付服务」主群 @船长 说“支付服务最近超时，帮我查一下”，确认提议后开发 Agent 会在 `task/<编号>` 分支上修复、推送、开 MR；评审 Agent 提两条意见，开发 Agent 返工；评审通过后测试 Agent 在独立环境测试；之后在「收件箱」批准合并审批，合并队列完成合并、关闭 Issue，船长在群里发完成摘要。全程不需要模型密钥（脚本模型）。
 - 设计取舍见 `docs/adr/0006-s5-code-execution.md`、`docs/adr/0007-s6-review-test-merge.md`。
+- **知识库**：`bun run seed` 后仓库在后台建索引。项目「知识库」页可问项目船长、看三路检索如何命中；工作台「问全局船长」问“超时相关的计费逻辑在哪个仓库哪个文件”，会询问计费服务的船长并给出可点击的引用。演示用确定性嵌入 `scripted:embed`；换真实嵌入模型时在租户设置 `embeddingModel`（维度须为 768），变更后自动全量重建。
 - **真实 GitLab 实测**（手动）：`bun test/gitlab/s6-gitlab.ts --print-seed DIR` 生成演示仓库（含 `.gitlab-ci.yml`）推到测试项目后，配置仓库密钥 `GITLAB_E2E_URL` / `GITLAB_E2E_TOKEN`，在 Actions 手动运行 `gitlab-e2e`。
 
 ## 目录

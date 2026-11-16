@@ -8,45 +8,22 @@
     {
       "repo": "payments",
       "question": "调用上游网关的超时时间在哪里配置",
-      "expect": [
-        "src/gateway.ts"
-      ],
-      "found": [
-        "docs/runbook.md",
-        "src/config.ts",
-        "README.md",
-        "decision/dcs_01a1e5eeebfc000x771cssv",
-        "src/callback.ts"
-      ],
+      "expect": ["src/gateway.ts"],
+      "found": ["docs/runbook.md", "src/config.ts", "README.md", "decision/dcs_01a1e5eeebfc000x771cssv", "src/callback.ts"],
       "hit": false
     },
     {
       "repo": "payments",
       "question": "超时的测试用例在哪",
-      "expect": [
-        "test/gateway.test.ts"
-      ],
-      "found": [
-        "decision/dcs_01a1e5eeebfc000x771cssv",
-        "README.md",
-        "docs/runbook.md",
-        "src/config.ts",
-        "src/config.ts"
-      ],
+      "expect": ["test/gateway.test.ts"],
+      "found": ["decision/dcs_01a1e5eeebfc000x771cssv", "README.md", "docs/runbook.md", "src/config.ts", "src/config.ts"],
       "hit": false
     },
     {
       "repo": "billing",
       "question": "账单总额怎么计算",
-      "expect": [
-        "src/invoice.ts"
-      ],
-      "found": [
-        "README.md",
-        "src/tax.ts",
-        "src/payments-client.ts",
-        "docs/timeouts.md"
-      ],
+      "expect": ["src/invoice.ts"],
+      "found": ["README.md", "src/tax.ts", "src/payments-client.ts", "docs/timeouts.md"],
       "hit": false
     }
   ]
