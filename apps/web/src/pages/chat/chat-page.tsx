@@ -1,5 +1,5 @@
 import { useQuery } from "@tanstack/react-query";
-import { Link, useNavigate } from "@tanstack/react-router";
+import { useNavigate } from "@tanstack/react-router";
 import { useVirtualizer } from "@tanstack/react-virtual";
 import { ArrowDown, Hash, ListTree, Loader2, MessagesSquare, Plus, Search, X } from "lucide-react";
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
@@ -19,11 +19,11 @@ import { realtime } from "@/lib/realtime";
 import { cn } from "@/lib/utils";
 import { Composer, type MemberLite } from "./composer";
 import { MessageItem, type MessageActions } from "./message-item";
-import { CreateTaskDialog, StatusPill } from "@/components/task-bits";
-import { useTasks } from "@/lib/tasks";
+import { CreateTaskDialog } from "@/components/task-bits";
+import { DecisionsTab, SummaryTab, TasksTab } from "./right-panel";
 import { catchUp, loadInitial, loadOlder, patch, refreshOne, upsertConfirmed, type Msg, type TimelineState } from "./timeline-store";
 
-type Row = { key: string; type: "date"; label: string } | { key: string; type: "unread" } | { key: string; type: "msg"; m: Msg; compact: boolean };
+type Row = { key: string; type: "date"; label: string } | { key: string; type: "unread" } | { key: string; type: "msg"; m: Msg; compact: boolean; replies: number };
 
 function dayLabel(iso: string) {
   const d = new Date(iso);
@@ -34,11 +34,22 @@ function dayLabel(iso: string) {
   return d.toLocaleDateString("zh-CN", { year: d.getFullYear() === today.getFullYear() ? undefined : "numeric", month: "long", day: "numeric", weekday: "short" });
 }
 
-function buildRows(items: Msg[], readAnchor: number, meId: string): Row[] {
+function buildRows(items: Msg[], readAnchor: number, meId: string, keepSeq?: number): Row[] {
   const rows: Row[] = [];
   let prev: Msg | undefined;
   let unreadPlaced = false;
+  // Threads: the root stays in the main flow with a reply count; replies live in the thread panel
+  // (an explicit jump to a reply keeps it visible so search/inbox links still land).
+  const rootOf = new Map<string, number>();
+  const replies = new Map<string, number>();
   for (const m of items) {
+    if (!m.threadId) continue;
+    if (!rootOf.has(m.threadId)) rootOf.set(m.threadId, m.seq);
+    else replies.set(m.threadId, (replies.get(m.threadId) ?? 0) + 1);
+  }
+  for (const m of items) {
+    const isReply = Boolean(m.threadId) && rootOf.get(m.threadId!) !== m.seq;
+    if (isReply && m.seq !== keepSeq) continue;
     const day = new Date(m.createdAt).toDateString();
     const newDay = !prev || new Date(prev.createdAt).toDateString() !== day;
     if (newDay) rows.push({ key: `d-${day}`, type: "date", label: dayLabel(m.createdAt) });
@@ -56,7 +67,7 @@ function buildRows(items: Msg[], readAnchor: number, meId: string): Row[] {
       prev.kind === "text" &&
       !m.replyTo &&
       new Date(m.createdAt).getTime() - new Date(prev.createdAt).getTime() < 5 * 60_000;
-    rows.push({ key: m.clientId ?? m.id, type: "msg", m, compact });
+    rows.push({ key: m.clientId ?? m.id, type: "msg", m, compact, replies: !isReply && m.threadId ? (replies.get(m.threadId) ?? 0) : 0 });
     prev = m;
   }
   return rows;
@@ -68,6 +79,7 @@ export function ChatPage({ projectId, groupId: gParam, seq, threadId }: { projec
   const groups = useGroups(projectId);
   const groupId = gParam ?? project.data?.mainGroupId ?? undefined;
   const group = groups.data?.find((g) => g.id === groupId);
+  const [q, setQ] = useState("");
 
   useEffect(() => {
     if (!gParam && project.data?.mainGroupId) void navigate({ to: "/projects/$projectId/chat", params: { projectId }, search: { g: project.data.mainGroupId }, replace: true });
@@ -90,7 +102,7 @@ export function ChatPage({ projectId, groupId: gParam, seq, threadId }: { projec
 
   return (
     <div className="grid min-h-0 w-full grid-cols-[248px_minmax(0,1fr)] xl:grid-cols-[248px_minmax(0,1fr)_300px]">
-      <LeftColumn projectId={projectId} groups={groups.data} activeGroupId={groupId} activeThreadId={threadId} canManage={p.canManage} archived={p.status === "archived"} />
+      <LeftColumn q={q} setQ={setQ} projectId={projectId} groups={groups.data} activeGroupId={groupId} activeThreadId={threadId} canManage={p.canManage} archived={p.status === "archived"} />
       {groupId && group ? (
         <ConversationColumn
           key={groupId}
@@ -100,6 +112,8 @@ export function ChatPage({ projectId, groupId: gParam, seq, threadId }: { projec
           seq={seq}
           canModerate={p.myRole === "maintainer" || p.canManage}
           canDecide={p.myRole !== "viewer" && p.status !== "archived"}
+          q={q}
+          setQ={setQ}
           readOnlyReason={
             p.status === "archived" ? "项目已归档，只读" : group.status !== "active" ? "群已归档，只读" : p.myRole === "viewer" ? "访客只能查看，不能发言" : !group.member ? "你不是本群成员" : null
           }
@@ -115,6 +129,8 @@ export function ChatPage({ projectId, groupId: gParam, seq, threadId }: { projec
 }
 
 function LeftColumn({
+  q,
+  setQ,
   projectId,
   groups,
   activeGroupId,
@@ -122,6 +138,8 @@ function LeftColumn({
   canManage,
   archived,
 }: {
+  q: string;
+  setQ: (v: string) => void;
   projectId: string;
   groups: Group[];
   activeGroupId?: string;
@@ -130,7 +148,6 @@ function LeftColumn({
   archived: boolean;
 }) {
   const navigate = useNavigate();
-  const [q, setQ] = useState("");
   const [debounced, setDebounced] = useState("");
   const [creating, setCreating] = useState(false);
   useEffect(() => {
@@ -147,17 +164,6 @@ function LeftColumn({
 
   return (
     <aside className="flex min-h-0 flex-col border-r bg-sidebar/40" aria-label="群与线程">
-      <div className="border-b p-2.5">
-        <div className="relative">
-          <Search className="pointer-events-none absolute top-1/2 left-2.5 size-3.5 -translate-y-1/2 text-muted-foreground" aria-hidden />
-          <Input value={q} onChange={(e) => setQ(e.target.value)} placeholder="搜索本项目消息" className="h-8 pl-8 text-sm" aria-label="搜索消息" data-testid="chat-search" />
-          {q && (
-            <button type="button" className="absolute top-1/2 right-2 -translate-y-1/2 text-muted-foreground" onClick={() => setQ("")} aria-label="清空搜索">
-              <X className="size-3.5" />
-            </button>
-          )}
-        </div>
-      </div>
       <div className="min-h-0 flex-1 overflow-y-auto p-2">
         {debounced ? (
           search.isPending ? (
@@ -168,6 +174,12 @@ function LeftColumn({
             <p className="px-2 py-6 text-center text-sm text-muted-foreground">没有匹配「{debounced}」的消息</p>
           ) : (
             <ul className="space-y-1" aria-label="搜索结果">
+              <li className="flex items-center justify-between px-2 pb-1 text-[11px] font-medium tracking-wider text-muted-foreground uppercase">
+                {search.data.length} 条结果
+                <button type="button" className="normal-case hover:text-foreground" onClick={() => setQ("")}>
+                  返回群列表
+                </button>
+              </li>
               {search.data.map((r) => (
                 <li key={r.messageId}>
                   <button
@@ -210,7 +222,7 @@ function LeftColumn({
                       onClick={() => void navigate({ to: "/projects/$projectId/chat", params: { projectId }, search: { g: g.id } })}
                       className={cn(
                         "flex h-8 w-full items-center gap-2 rounded-md px-2 text-left text-sm hover:bg-muted",
-                        g.id === activeGroupId && !activeThreadId && "bg-accent font-medium",
+                        g.id === activeGroupId && !activeThreadId && "bg-card font-medium shadow-xs ring-1 ring-border",
                         g.unread > 0 && "font-semibold",
                       )}
                       aria-current={g.id === activeGroupId ? "page" : undefined}
@@ -326,6 +338,8 @@ function ConversationColumn({
   seq,
   canModerate,
   canDecide,
+  q,
+  setQ,
   readOnlyReason,
 }: {
   projectId: string;
@@ -334,6 +348,8 @@ function ConversationColumn({
   seq?: number;
   canModerate: boolean;
   canDecide: boolean;
+  q: string;
+  setQ: (v: string) => void;
   readOnlyReason: string | null;
 }) {
   const groupId = group.id;
@@ -354,7 +370,7 @@ function ConversationColumn({
   const payloads = useRef(new Map<string, { body: string; attachmentIds: string[]; replyToId?: string }>());
 
   const items = useMemo(() => timeline.data?.items ?? [], [timeline.data?.items]);
-  const rows = useMemo(() => buildRows(items, timeline.data?.readAnchor ?? 0, meId), [items, timeline.data?.readAnchor, meId]);
+  const rows = useMemo(() => buildRows(items, timeline.data?.readAnchor ?? 0, meId, seq), [items, timeline.data?.readAnchor, meId, seq]);
   const virt = useVirtualizer({
     count: rows.length,
     getScrollElement: () => scrollRef.current,
@@ -455,7 +471,7 @@ function ConversationColumn({
         requestAnimationFrame(() => {
           const s = queryClient.getQueryData<TimelineState>(qk.timeline(groupId));
           if (!s || !firstKey) return;
-          const idx = buildRows(s.items, s.readAnchor, meId).findIndex((r) => r.key === firstKey);
+          const idx = buildRows(s.items, s.readAnchor, meId, seq).findIndex((r) => r.key === firstKey);
           if (idx > 0) virt.scrollToIndex(idx, { align: "start" });
         });
       } catch (e) {
@@ -464,7 +480,7 @@ function ConversationColumn({
         setLoadingOlder(false);
       }
     }
-  }, [groupId, loadingOlder, timeline.data?.hasMoreBefore, rows, meId, virt]);
+  }, [groupId, loadingOlder, timeline.data?.hasMoreBefore, rows, meId, virt, seq]);
 
   async function send(body: string, attachmentIds: string[], replyToId?: string, retryOf?: Msg) {
     const clientId = retryOf?.clientId ?? newIdempotencyKey();
@@ -513,6 +529,7 @@ function ConversationColumn({
       onEdit: setEditing,
       onDelete: setDeleting,
       onThread: setThreadOf,
+      onOpenThread: (threadId: string) => void navigate({ to: "/projects/$projectId/chat", params: { projectId }, search: { g: groupId, t: threadId } }),
       onCreateTask: setTaskFrom,
       onRetry: (m) => {
         const pl = m.clientId ? payloads.current.get(m.clientId) : undefined;
@@ -531,11 +548,27 @@ function ConversationColumn({
 
   return (
     <section className="relative flex min-h-0 min-w-0 flex-col" aria-label={`群 ${group.name}`}>
-      <header className="flex h-11 shrink-0 items-center gap-2 border-b px-5">
-        <Hash className="size-4 text-muted-foreground" aria-hidden />
-        <h1 className="font-semibold">{group.name}</h1>
-        {group.kind === "main" && <span className="rounded bg-muted px-1.5 text-[11px] text-muted-foreground">主群</span>}
-        <span className="text-xs text-muted-foreground">{members.data ? `${members.data.length} 位成员` : ""}</span>
+      <header className="flex h-16 shrink-0 items-center gap-3 border-b px-6">
+        <div className="min-w-0 flex-1">
+          <h1 className="flex items-center gap-1.5 truncate text-[15px] leading-tight font-semibold">
+            <Hash className="size-4 text-muted-foreground" aria-hidden />
+            {group.name}
+          </h1>
+          <p className="mt-0.5 truncate text-xs text-muted-foreground">
+            {group.kind === "main" ? "项目主群" : "讨论群"}
+            {members.data ? ` · ${members.data.length} 位成员` : ""}
+            {members.data ? ` · ${members.data.filter((m) => m.kind === "agent").length} 个 Agent` : ""} · 按 seq 排序
+          </p>
+        </div>
+        <div className="relative w-64 shrink-0">
+          <Search className="pointer-events-none absolute top-1/2 left-3 size-3.5 -translate-y-1/2 text-muted-foreground" aria-hidden />
+          <Input value={q} onChange={(e) => setQ(e.target.value)} placeholder="搜索本项目消息" className="h-9 rounded-full bg-card pl-8 text-sm" aria-label="搜索消息" data-testid="chat-search" />
+          {q && (
+            <button type="button" className="absolute top-1/2 right-3 -translate-y-1/2 text-muted-foreground" onClick={() => setQ("")} aria-label="清空搜索">
+              <X className="size-3.5" />
+            </button>
+          )}
+        </div>
       </header>
       <div ref={scrollRef} onScroll={() => void onScroll()} className="min-h-0 flex-1 overflow-y-auto" data-testid="timeline" role="log" aria-live="polite" aria-label="消息列表">
         {timeline.isPending ? (
@@ -567,17 +600,18 @@ function ConversationColumn({
                 return (
                   <div key={vi.key} data-index={vi.index} ref={virt.measureElement} style={{ position: "absolute", top: 0, left: 0, width: "100%", transform: `translateY(${vi.start}px)` }}>
                     {r.type === "date" ? (
-                      <div className="flex items-center gap-3 px-5 py-2 text-[11px] font-medium text-muted-foreground">
+                      <div className="flex items-center gap-3 px-6 pt-4 pb-1 text-[11px] font-medium text-muted-foreground">
                         <span className="h-px flex-1 bg-border" /> {r.label} <span className="h-px flex-1 bg-border" />
                       </div>
                     ) : r.type === "unread" ? (
-                      <div className="flex items-center gap-3 px-5 py-1 text-[11px] font-semibold text-danger" data-testid="unread-divider">
-                        <span className="h-px flex-1 bg-danger/50" /> 新消息 <span className="h-px flex-1 bg-danger/50" />
+                      <div className="flex items-center gap-3 px-6 py-2 text-[11px] font-medium text-primary" data-testid="unread-divider">
+                        <span className="h-px flex-1 bg-primary/30" /> 以下为新消息 <span className="h-px flex-1 bg-primary/30" />
                       </div>
                     ) : (
                       <MessageItem
                         m={r.m}
                         compact={r.compact}
+                        replies={r.replies}
                         highlight={Boolean(timeline.data.highlight) && r.m.seq === focusSeq}
                         meId={meId}
                         canModerate={canModerate}
@@ -749,34 +783,34 @@ function RightColumn({ groupId, threadId, projectId }: { groupId: string; thread
   const humans = (members.data ?? []).filter((m) => m.kind !== "agent");
   const agents = (members.data ?? []).filter((m) => m.kind === "agent");
   return (
-    <aside className="hidden min-h-0 flex-col border-l bg-sidebar/30 xl:flex" aria-label="群信息">
+    <aside className="hidden min-h-0 flex-col border-l bg-sidebar/50 xl:flex" aria-label="群信息">
       <Tabs value={tab} onValueChange={setTab} className="flex min-h-0 flex-1 flex-col gap-0">
-        <TabsList className="m-2 grid w-auto grid-cols-4">
+        <TabsList className="mx-3 mt-3 mb-2 grid h-9 w-auto grid-cols-4 gap-1">
           {threadId ? <TabsTrigger value="thread">线程</TabsTrigger> : <TabsTrigger value="summary">摘要</TabsTrigger>}
           <TabsTrigger value="decisions">决策</TabsTrigger>
           <TabsTrigger value="tasks">任务</TabsTrigger>
           <TabsTrigger value="members">成员</TabsTrigger>
         </TabsList>
-        <div className="min-h-0 flex-1 overflow-y-auto px-3 pb-3">
+        <div className="min-h-0 flex-1 overflow-y-auto px-4 pb-4">
           <TabsContent value="summary">
-            <EmptyState title="暂无摘要" body="讨论积累到一定量后，项目船长会在这里维护本群摘要（可手动 /summary 触发）。" />
+            <SummaryTab projectId={projectId} groupId={groupId} />
           </TabsContent>
           <TabsContent value="thread">
             {threadId && <ThreadPanel groupId={groupId} threadId={threadId} onClose={() => void navigate({ to: "/projects/$projectId/chat", params: { projectId }, search: { g: groupId } })} />}
           </TabsContent>
           <TabsContent value="decisions">
-            <EmptyState title="暂无决策" body="被确认的决策会沉淀到这里，并同步到知识库。" />
+            <DecisionsTab groupId={groupId} />
           </TabsContent>
           <TabsContent value="tasks">
-            <GroupTasks projectId={projectId} groupId={groupId} />
+            <TasksTab projectId={projectId} groupId={groupId} />
           </TabsContent>
-          <TabsContent value="members" className="space-y-4">
+          <TabsContent value="members" className="space-y-2">
             {members.isPending ? (
               <PageSkeleton rows={4} />
             ) : (
               <>
-                <MemberList title={`成员 · ${humans.length}`} list={humans} onPick={mention} />
-                <MemberList title={`Agent · ${agents.length}`} list={agents} onPick={mention} />
+                <MemberList title="成员" dot="bg-primary" list={humans} onPick={mention} />
+                <MemberList title="Agent" dot="bg-agent" list={agents} onPick={mention} />
               </>
             )}
           </TabsContent>
@@ -790,20 +824,25 @@ const mention = (name: string) => window.dispatchEvent(new CustomEvent("ap:inser
 
 function MemberList({
   title,
+  dot,
   list,
   onPick,
 }: {
   title: string;
+  dot: string;
   list: { principalId: string; name: string; kind: string; role: string; agentRole: string | null; active: boolean }[];
   onPick(name: string): void;
 }) {
   return (
     <div>
-      <p className="mb-1 px-1 text-[11px] font-medium uppercase tracking-wider text-muted-foreground">{title}</p>
+      <h3 className="mb-1.5 flex items-center gap-2 px-1 pt-2 text-[12px] font-medium text-muted-foreground">
+        <span className={cn("size-1.5 rounded-full", dot)} aria-hidden />
+        {title} <span className="tabular-nums">{list.length}</span>
+      </h3>
       <ul className="space-y-0.5">
         {list.map((m) => (
           <li key={m.principalId}>
-            <button type="button" onClick={() => onPick(m.name)} className="flex w-full items-center gap-2 rounded-md px-1.5 py-1 text-left text-sm hover:bg-muted" title={`点击 @${m.name}`}>
+            <button type="button" onClick={() => onPick(m.name)} className="flex w-full items-center gap-2.5 rounded-lg px-1.5 py-1.5 text-left text-sm hover:bg-muted" title={`点击 @${m.name}`}>
               <PrincipalAvatar name={m.name} kind={m.kind} size="sm" />
               <span className={cn("truncate", !m.active && "text-muted-foreground line-through")}>{m.name}</span>
               <span className="ml-auto text-[11px] text-muted-foreground">{m.agentRole ? AGENT_ROLE_LABEL[m.agentRole] : m.role === "viewer" ? "只读" : ""}</span>
@@ -867,27 +906,5 @@ function ThreadPanel({ groupId, threadId, onClose }: { groupId: string; threadId
         </Button>
       </div>
     </div>
-  );
-}
-
-function GroupTasks({ projectId, groupId }: { projectId: string; groupId: string }) {
-  const q = useTasks(projectId, { groupId });
-  if (q.isPending) return <PageSkeleton rows={3} />;
-  if (q.error) return <ErrorState error={q.error} onRetry={() => void q.refetch()} />;
-  if (q.data.length === 0) return <EmptyState title="暂无关联任务" body="从本群提议并确认的任务会显示在这里。" />;
-  return (
-    <ul className="space-y-1.5" data-testid="group-tasks">
-      {q.data.map((t) => (
-        <li key={t.id}>
-          <Link to="/projects/$projectId/tasks/$taskId" params={{ projectId, taskId: t.id }} className="block rounded-lg border bg-card px-2.5 py-2 hover:border-ring/50">
-            <span className="flex items-center gap-1.5">
-              <span className="font-mono text-[11px] text-muted-foreground">{t.ref}</span>
-              <StatusPill status={t.status} className="ml-auto" />
-            </span>
-            <span className="mt-0.5 line-clamp-2 block text-sm">{t.title}</span>
-          </Link>
-        </li>
-      ))}
-    </ul>
   );
 }

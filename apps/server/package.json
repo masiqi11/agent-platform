@@ -10,7 +10,8 @@
     "dev": "bun --watch src/main.ts",
     "typecheck": "tsc -p tsconfig.json",
     "build": "tsc -p tsconfig.json",
-    "test": "bun test --timeout 60000"
+    "test": "bun test --timeout 60000",
+    "seed:demo": "bun src/cli/seed-demo.ts"
   },
   "dependencies": {
     "@ap/shared": "workspace:*",

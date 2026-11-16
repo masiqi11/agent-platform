@@ -1,4 +1,4 @@
-import { CornerUpLeft, FileText, ListTodo, ListTree, MoreHorizontal, Paperclip, Pencil, RotateCcw, Trash2 } from "lucide-react";
+import { CornerUpLeft, FileText, KanbanSquare, ListTodo, ListTree, MoreHorizontal, Paperclip, Pencil, RotateCcw, Trash2 } from "lucide-react";
 import { memo, useState } from "react";
 import { PrincipalAvatar } from "@/components/agent-avatar";
 import { Markdown } from "@/components/markdown";
@@ -14,11 +14,11 @@ import { cn } from "@/lib/utils";
 import type { Msg } from "./timeline-store";
 
 const CARD: Record<string, { label: string; cls: string }> = {
-  summary_card: { label: "摘要", cls: "border-info/40 bg-info-soft/60" },
-  proposal_card: { label: "任务提议", cls: "border-attention/50 bg-attention-soft/60" },
-  task_card: { label: "任务", cls: "border-primary/40 bg-accent/60" },
-  question: { label: "问题", cls: "border-attention/50 bg-attention-soft/40" },
-  decision_card: { label: "决策", cls: "border-ok/40 bg-ok-soft/60" },
+  summary_card: { label: "摘要", cls: "border-border bg-card" },
+  proposal_card: { label: "任务提议", cls: "border-attention/30 bg-attention-soft/50" },
+  task_card: { label: "任务", cls: "border-border bg-card" },
+  question: { label: "问题", cls: "border-attention/30 bg-attention-soft/40" },
+  decision_card: { label: "决策", cls: "border-ok/30 bg-ok-soft/50" },
 };
 
 export interface MessageActions {
@@ -26,6 +26,7 @@ export interface MessageActions {
   onEdit(m: Msg): void;
   onDelete(m: Msg): void;
   onThread(m: Msg): void;
+  onOpenThread(threadId: string): void;
   onCreateTask(m: Msg): void;
   onRetry(m: Msg): void;
 }
@@ -42,6 +43,7 @@ async function openAttachment(id: string) {
 export const MessageItem = memo(function MessageItem({
   m,
   compact,
+  replies = 0,
   highlight,
   meId,
   canModerate,
@@ -52,6 +54,7 @@ export const MessageItem = memo(function MessageItem({
 }: {
   m: Msg;
   compact: boolean;
+  replies?: number;
   highlight: boolean;
   meId: string;
   canModerate: boolean;
@@ -70,8 +73,8 @@ export const MessageItem = memo(function MessageItem({
   return (
     <div
       className={cn(
-        "group relative flex gap-3 px-5 transition-colors hover:bg-muted/40",
-        compact ? "py-0.5" : "pt-2.5 pb-0.5",
+        "group relative flex gap-3.5 px-6 transition-colors hover:bg-muted/40",
+        compact ? "py-1" : "pt-4 pb-1",
         highlight && "bg-attention-soft/70 hover:bg-attention-soft/70",
         mentionsMe && !highlight && "border-l-2 border-attention bg-attention-soft/25",
         m.pending && "opacity-70",
@@ -79,7 +82,7 @@ export const MessageItem = memo(function MessageItem({
       data-seq={m.seq}
       data-testid="message"
     >
-      <div className="w-8 shrink-0">
+      <div className="w-9 shrink-0">
         {compact ? (
           <span className="invisible block pt-1 text-right text-[10px] text-muted-foreground group-hover:visible" title={absoluteTime(m.createdAt)}>
             {fmtTime(m.createdAt)}
@@ -91,7 +94,7 @@ export const MessageItem = memo(function MessageItem({
       <div className="min-w-0 flex-1">
         {!compact && (
           <div className="flex items-baseline gap-2">
-            <span className={cn("text-sm font-semibold", isAgent && "text-agent")}>{m.author.name}</span>
+            <span className={cn("text-[14px] font-semibold", isAgent && "text-agent")}>{m.author.name}</span>
             {isAgent && <span className="rounded bg-agent-soft px-1 py-px text-[10px] font-medium text-agent">Agent</span>}
             {m.author.name !== m.author.currentName && <span className="text-[11px] text-muted-foreground">（现名 {m.author.currentName}）</span>}
             <span className="text-[11px] text-muted-foreground" title={absoluteTime(m.createdAt)}>
@@ -110,8 +113,8 @@ export const MessageItem = memo(function MessageItem({
         {m.deleted ? (
           <p className="text-sm italic text-muted-foreground">{m.body}</p>
         ) : card ? (
-          <div className={cn("my-1 max-w-2xl rounded-lg border px-3 py-2", card.cls)}>
-            <p className="mb-1 flex items-center gap-1.5 text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+          <div className={cn("mt-1.5 mb-1 max-w-2xl rounded-xl border px-4 py-3", card.cls)}>
+            <p className={cn("mb-1 flex items-center gap-1.5 text-xs font-semibold tracking-wide text-muted-foreground uppercase", (m.kind === "proposal_card" || m.kind === "task_card") && "hidden")}>
               <FileText className="size-3.5" /> {card.label}
               {typeof m.blocks?.title === "string" ? <span className="normal-case tracking-normal text-foreground">· {m.blocks.title}</span> : null}
             </p>
@@ -119,6 +122,8 @@ export const MessageItem = memo(function MessageItem({
               <ProposalPanel proposalId={m.blocks.proposalId} canDecide={canDecide} compact />
             ) : m.kind === "task_card" && typeof m.blocks?.taskId === "string" ? (
               <TaskCardInline taskId={m.blocks.taskId} />
+            ) : m.kind === "decision_card" && typeof m.blocks?.title === "string" ? (
+              <Markdown text={m.body.split("\n").slice(1).join("\n").trim()} className="text-muted-foreground" />
             ) : (
               <Markdown text={m.body} mentionNames={mentionNames} projectKey={projectKey} />
             )}
@@ -135,6 +140,16 @@ export const MessageItem = memo(function MessageItem({
               </button>
             ))}
           </div>
+        )}
+        {m.threadId && replies > 0 && (
+          <button
+            type="button"
+            onClick={() => actions.onOpenThread(m.threadId!)}
+            className="mt-1 inline-flex items-center gap-1.5 rounded-md px-1.5 py-0.5 text-xs font-medium text-primary hover:bg-accent"
+            data-testid="thread-replies"
+          >
+            <ListTree className="size-3.5" /> {replies} 条回复 · 查看线程
+          </button>
         )}
         <div className="flex gap-2 text-[11px] text-muted-foreground">
           {m.editedAt && !m.deleted && <span title={absoluteTime(m.editedAt)}>（已编辑）</span>}
@@ -194,6 +209,7 @@ function TaskCardInline({ taskId }: { taskId: string }) {
   if (t.error) return <p className="text-sm text-muted-foreground">任务不可见或已删除</p>;
   return (
     <div className="flex items-center gap-2 text-sm" data-testid="task-card-inline">
+      <KanbanSquare className="size-4 shrink-0 text-primary" aria-hidden />
       <span className="font-mono text-xs text-muted-foreground">{t.data.ref}</span>
       <Link to="/projects/$projectId/tasks/$taskId" params={{ projectId: t.data.projectId, taskId }} className="min-w-0 flex-1 truncate font-medium hover:underline">
         {t.data.title}

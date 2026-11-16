@@ -39,6 +39,7 @@ bun run dev
 | `bun run typecheck` / `lint` / `format:check` | 质量检查                                                                     |
 | `bun run test`                                | 单元与集成测试（需要 `TEST_DATABASE_URL` 指向可建库的 Postgres）             |
 | `bun run e2e`                                 | Playwright 端到端（自动建临时库 `agent_platform_e2e`，需先 `bun run build`） |
+| `bun run --cwd apps/server seed:demo`         | 写入【演示数据】项目（需 `DATABASE_URL`、`SEED_PASSWORD`），仅用于体验与截图 |
 | `bun run audit:verify`                        | 校验审计哈希链                                                               |
 
 ## 本地模型（可选）

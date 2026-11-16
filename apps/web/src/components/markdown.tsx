@@ -200,5 +200,5 @@ export function Markdown({ text, className, ...o }: { text: string; className?: 
       </p>,
     );
   }
-  return <div className={cn("text-[14px] leading-relaxed", className)}>{blocks}</div>;
+  return <div className={cn("text-[14.5px] leading-[1.7]", className)}>{blocks}</div>;
 }

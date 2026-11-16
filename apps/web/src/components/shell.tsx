@@ -1,6 +1,5 @@
 import { Link, useNavigate, useRouterState } from "@tanstack/react-router";
 import {
-  Bell,
   Bot,
   ChevronsLeft,
   ChevronsRight,
@@ -58,15 +57,15 @@ function NavLink({ item, collapsed, path: given }: { item: NavItem; collapsed: b
     <Link
       to={item.to}
       className={cn(
-        "group flex h-8 items-center gap-2.5 rounded-md px-2 text-sm text-sidebar-foreground/80 transition-colors hover:bg-sidebar-active/60 hover:text-sidebar-foreground",
-        active && "bg-sidebar-active font-medium text-sidebar-foreground",
+        "group flex h-9 items-center gap-2.5 rounded-lg px-2.5 text-sm text-sidebar-foreground/80 transition-colors hover:bg-sidebar-active/60 hover:text-sidebar-foreground",
+        active && "bg-sidebar-active font-medium text-sidebar-foreground shadow-xs ring-1 ring-border/80",
         collapsed && "justify-center px-0",
       )}
       aria-current={active ? "page" : undefined}
     >
       <item.icon className={cn("size-4 shrink-0", active ? "text-primary" : "text-muted-foreground")} aria-hidden />
       {!collapsed && <span className="truncate">{label}</span>}
-      {!collapsed && item.badge ? <span className="ml-auto rounded-full bg-attention px-1.5 text-[11px] font-semibold leading-5 text-black/80">{item.badge}</span> : null}
+      {!collapsed && item.badge ? <span className="ml-auto rounded-full bg-accent px-1.5 text-[11px] font-semibold leading-5 text-accent-foreground tabular-nums">{item.badge}</span> : null}
     </Link>
   );
   if (!collapsed) return body;
@@ -123,7 +122,7 @@ function ActiveProject({ id, name, pkey, collapsed, path }: { id: string; name: 
     { to: `/projects/${id}/agents`, label: "Agent" as MsgKey, icon: Bot, raw: true },
   ];
   return (
-    <div className="rounded-md bg-sidebar-active/30 py-0.5">
+    <div className="py-0.5">
       {!collapsed && (
         <p className="flex items-center gap-2 px-2 py-1 text-sm font-medium" title={name}>
           <FolderKanban className="size-4 text-primary" aria-hidden />
@@ -131,7 +130,7 @@ function ActiveProject({ id, name, pkey, collapsed, path }: { id: string; name: 
           <span className="ml-auto font-mono text-[10px] text-muted-foreground">{pkey}</span>
         </p>
       )}
-      <div className={cn("space-y-0.5", !collapsed && "pl-3")}>
+      <div className={cn("space-y-0.5", !collapsed && "ml-3.5 border-l pl-2")}>
         {subs.map((i) => (
           <NavLink key={i.to} item={i} collapsed={collapsed} path={path} />
         ))}
@@ -140,7 +139,7 @@ function ActiveProject({ id, name, pkey, collapsed, path }: { id: string; name: 
   );
 }
 
-export function Sidebar({ collapsed, onToggle, extra }: { collapsed: boolean; onToggle(): void; extra?: ReactNode }) {
+export function Sidebar({ collapsed, onToggle, onSearch, extra }: { collapsed: boolean; onToggle(): void; onSearch(): void; extra?: ReactNode }) {
   const { data: me } = useMe();
   const admin: NavItem[] = [];
   if (isAdmin(me)) admin.push({ to: "/admin/users", label: "nav.users", icon: Users });
@@ -156,6 +155,20 @@ export function Sidebar({ collapsed, onToggle, extra }: { collapsed: boolean; on
           </div>
         )}
       </div>
+      <button
+        type="button"
+        onClick={onSearch}
+        aria-label={t("top.search")}
+        className={cn("mb-3 flex h-8 items-center gap-2 rounded-lg border bg-card/70 px-2.5 text-sm text-muted-foreground transition-colors hover:border-ring/50", collapsed && "justify-center px-0")}
+      >
+        <Search className="size-3.5 shrink-0" aria-hidden />
+        {!collapsed && (
+          <>
+            <span className="truncate">{t("top.search")}</span>
+            <kbd className="ml-auto rounded border bg-muted px-1 font-mono text-[10px]">⌘K</kbd>
+          </>
+        )}
+      </button>
       <nav className="flex-1 overflow-y-auto">
         <div className="space-y-0.5">
           <NavLink item={{ to: "/", label: "nav.home", icon: Home }} collapsed={collapsed} />
@@ -171,16 +184,13 @@ export function Sidebar({ collapsed, onToggle, extra }: { collapsed: boolean; on
           </Section>
         )}
       </nav>
-      <Button
-        variant="ghost"
-        size="sm"
-        className={cn("mt-2 text-muted-foreground", collapsed ? "justify-center" : "justify-start")}
-        onClick={onToggle}
-        aria-label={collapsed ? "展开侧边栏" : "折叠侧边栏"}
-      >
-        {collapsed ? <ChevronsRight className="size-4" /> : <ChevronsLeft className="size-4" />}
-        {!collapsed && <span>折叠</span>}
-      </Button>
+      <div className={cn("mt-2 flex items-center gap-1 border-t pt-2.5", collapsed && "flex-col")}>
+        <UserMenu collapsed={collapsed} />
+        <ThemeMenu />
+        <Button variant="ghost" size="icon" className="size-8 text-muted-foreground" onClick={onToggle} aria-label={collapsed ? "展开侧边栏" : "折叠侧边栏"}>
+          {collapsed ? <ChevronsRight className="size-4" /> : <ChevronsLeft className="size-4" />}
+        </Button>
+      </div>
     </aside>
   );
 }
@@ -191,7 +201,7 @@ function ThemeMenu() {
   return (
     <DropdownMenu>
       <DropdownMenuTrigger asChild>
-        <Button variant="ghost" size="icon" aria-label={t("top.theme")} data-testid="theme-toggle">
+        <Button variant="ghost" size="icon" className="size-8 text-muted-foreground" aria-label={t("top.theme")} data-testid="theme-toggle">
           <Icon className="size-4" />
         </Button>
       </DropdownMenuTrigger>
@@ -212,21 +222,28 @@ function ThemeMenu() {
   );
 }
 
-function UserMenu() {
+const TENANT_ROLE: Record<string, string> = { owner: "所有者", admin: "管理员", member: "成员", viewer: "只读", auditor: "审计员" };
+
+function UserMenu({ collapsed }: { collapsed: boolean }) {
   const { data: me } = useMe();
   const navigate = useNavigate();
   const initials = (me?.displayName ?? "?").slice(0, 1);
   return (
     <DropdownMenu>
       <DropdownMenuTrigger asChild>
-        <Button variant="ghost" className="h-8 gap-2 px-1.5" aria-label="用户菜单">
-          <Avatar className="size-6">
-            <AvatarFallback className="bg-primary text-[11px] text-primary-foreground">{initials}</AvatarFallback>
+        <Button variant="ghost" className={cn("h-10 min-w-0 gap-2 px-1.5", !collapsed && "flex-1 justify-start")} aria-label="用户菜单">
+          <Avatar className="size-7">
+            <AvatarFallback className="bg-avatar text-[12px] font-medium text-avatar-foreground">{initials}</AvatarFallback>
           </Avatar>
-          <span className="hidden text-sm md:inline">{me?.displayName}</span>
+          {!collapsed && (
+            <span className="min-w-0 text-left leading-tight">
+              <span className="block truncate text-sm font-medium">{me?.displayName}</span>
+              <span className="block text-[11px] text-muted-foreground">{TENANT_ROLE[me?.tenantRole ?? ""] ?? ""}</span>
+            </span>
+          )}
         </Button>
       </DropdownMenuTrigger>
-      <DropdownMenuContent align="end" className="w-56">
+      <DropdownMenuContent align="start" side="top" className="w-56">
         <DropdownMenuLabel>
           <p className="font-medium">{me?.displayName}</p>
           <p className="text-xs font-normal text-muted-foreground">{me?.email}</p>
@@ -303,7 +320,7 @@ function ConnectionBar() {
   );
 }
 
-export function AppShell({ title, children, sidebarExtra }: { title?: ReactNode; children: ReactNode; sidebarExtra?: ReactNode }) {
+export function AppShell({ children, sidebarExtra }: { children: ReactNode; sidebarExtra?: ReactNode }) {
   const [collapsed, setCollapsed] = useState(() => localStorage.getItem("ap.sidebar") === "1" || window.innerWidth < 1280);
   const [cmd, setCmd] = useState(false);
   const navigate = useNavigate();
@@ -337,6 +354,7 @@ export function AppShell({ title, children, sidebarExtra }: { title?: ReactNode;
       <Sidebar
         collapsed={collapsed}
         extra={sidebarExtra}
+        onSearch={() => setCmd(true)}
         onToggle={() =>
           setCollapsed((c) => {
             localStorage.setItem("ap.sidebar", c ? "0" : "1");
@@ -346,24 +364,6 @@ export function AppShell({ title, children, sidebarExtra }: { title?: ReactNode;
       />
       <div className={cn("flex min-w-0 flex-1 flex-col", bleed || fill ? "overflow-hidden" : "overflow-y-auto")}>
         <ConnectionBar />
-        <header className="sticky top-0 z-20 flex h-12 items-center gap-3 border-b bg-background/85 px-4 backdrop-blur">
-          <div className="min-w-0 flex-1 truncate text-sm text-muted-foreground">{title}</div>
-          <button
-            type="button"
-            onClick={() => setCmd(true)}
-            className="hidden h-8 w-72 items-center gap-2 rounded-md border bg-card px-2.5 text-sm text-muted-foreground transition-colors hover:border-ring/50 md:flex"
-          >
-            <Search className="size-3.5" aria-hidden /> {t("top.search")}
-            <kbd className="ml-auto rounded border bg-muted px-1.5 font-mono text-[10px]">⌘K</kbd>
-          </button>
-          <Button variant="ghost" size="icon" asChild aria-label={t("nav.inbox")}>
-            <Link to="/inbox">
-              <Bell className="size-4" />
-            </Link>
-          </Button>
-          <ThemeMenu />
-          <UserMenu />
-        </header>
         <main className={bleed ? "flex min-h-0 flex-1" : fill ? "flex min-h-0 w-full flex-1 flex-col px-6 pt-6 pb-3" : "mx-auto w-full max-w-[1400px] flex-1 px-6 py-6"}>{children}</main>
       </div>
       <CommandPalette open={cmd} onOpenChange={setCmd} />

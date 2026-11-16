@@ -25,8 +25,8 @@ export function PageSkeleton({ rows = 5, className }: { rows?: number; className
 
 export function EmptyState({ icon: Icon = Compass, title, body, action }: { icon?: LucideIcon; title: string; body?: string; action?: ReactNode }) {
   return (
-    <div className="flex flex-col items-center justify-center rounded-lg border border-dashed px-6 py-14 text-center">
-      <div className="mb-3 grid size-10 place-items-center rounded-full bg-accent text-accent-foreground">
+    <div className="flex flex-col items-center justify-center rounded-2xl bg-muted/45 px-6 py-14 text-center">
+      <div className="mb-3 grid size-11 place-items-center rounded-full bg-card text-primary shadow-xs ring-1 ring-border">
         <Icon className="size-5" aria-hidden />
       </div>
       <p className="font-medium">{title}</p>
