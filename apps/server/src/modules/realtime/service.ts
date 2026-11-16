@@ -43,13 +43,22 @@ export function createRealtime(d: { db: Database; identity: Identity }) {
         return (await d.identity.check(ctx, "project.view", { projectId: id })).allowed;
       }
       if (kind === "group") {
-        const [g] = await d.db.root.select().from(chatGroup).where(and(eq(chatGroup.id, id), eq(chatGroup.tenantId, ctx.tenantId)));
+        const [g] = await d.db.root
+          .select()
+          .from(chatGroup)
+          .where(and(eq(chatGroup.id, id), eq(chatGroup.tenantId, ctx.tenantId)));
         if (!g) return false;
-        const [m] = await d.db.root.select().from(groupMember).where(and(eq(groupMember.groupId, id), eq(groupMember.principalId, ctx.actor.principalId)));
+        const [m] = await d.db.root
+          .select()
+          .from(groupMember)
+          .where(and(eq(groupMember.groupId, id), eq(groupMember.principalId, ctx.actor.principalId)));
         return Boolean(m) || (await d.identity.check(ctx, "project.view", { projectId: g.projectId })).allowed;
       }
       if (kind === "task") {
-        const [t] = await d.db.root.select().from(task).where(and(eq(task.id, id), eq(task.tenantId, ctx.tenantId)));
+        const [t] = await d.db.root
+          .select()
+          .from(task)
+          .where(and(eq(task.id, id), eq(task.tenantId, ctx.tenantId)));
         return Boolean(t) && (await d.identity.check(ctx, "project.view", { projectId: t!.projectId })).allowed;
       }
     } catch {
@@ -106,7 +115,7 @@ export function createRealtime(d: { db: Database; identity: Identity }) {
   async function recheckAll() {
     for (const c of conns.values()) {
       if (!c.ctx) continue;
-      for (const t of [...c.topics]) {
+      for (const t of Array.from(c.topics)) {
         if (!(await canSubscribe(c.ctx, t))) {
           c.topics.delete(t);
           sendTo(c, { type: "unsubscribed", topic: t, reason: "permission_changed" });

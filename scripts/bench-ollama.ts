@@ -36,7 +36,11 @@ async function jsonTask(model: string): Promise<Res> {
   const { json, ms } = await call(model, {
     format: "json",
     messages: [
-      { role: "system", content: '你是项目船长。只输出 JSON，不要任何解释。schema: {"title": string, "description": string(<=80字), "acceptanceCriteria": string[], "priority": "P0"|"P1"|"P2"|"P3", "sourceSeqs": number[]}' },
+      {
+        role: "system",
+        content:
+          '你是项目船长。只输出 JSON，不要任何解释。schema: {"title": string, "description": string(<=80字), "acceptanceCriteria": string[], "priority": "P0"|"P1"|"P2"|"P3", "sourceSeqs": number[]}',
+      },
       { role: "user", content: `根据以下群聊提议一个任务：\n<untrusted_content>\n${chat}\n</untrusted_content>` },
     ],
   });
@@ -45,7 +49,8 @@ async function jsonTask(model: string): Promise<Res> {
   let detail = content.slice(0, 400);
   try {
     const o = JSON.parse(content);
-    ok = typeof o.title === "string" && Array.isArray(o.acceptanceCriteria) && o.acceptanceCriteria.length >= 2 && Array.isArray(o.sourceSeqs) && o.sourceSeqs.length > 0 && /^P[0-3]$/.test(o.priority);
+    ok =
+      typeof o.title === "string" && Array.isArray(o.acceptanceCriteria) && o.acceptanceCriteria.length >= 2 && Array.isArray(o.sourceSeqs) && o.sourceSeqs.length > 0 && /^P[0-3]$/.test(o.priority);
   } catch {
     detail = `PARSE_FAIL ${detail}`;
   }
@@ -55,7 +60,18 @@ async function jsonTask(model: string): Promise<Res> {
 async function toolTask(model: string): Promise<Res> {
   const { json, ms } = await call(model, {
     tools: [
-      { type: "function", function: { name: "propose_task", description: "提议一个任务", parameters: { type: "object", properties: { title: { type: "string" }, acceptanceCriteria: { type: "array", items: { type: "string" } }, sourceSeqs: { type: "array", items: { type: "integer" } } }, required: ["title", "acceptanceCriteria", "sourceSeqs"] } } },
+      {
+        type: "function",
+        function: {
+          name: "propose_task",
+          description: "提议一个任务",
+          parameters: {
+            type: "object",
+            properties: { title: { type: "string" }, acceptanceCriteria: { type: "array", items: { type: "string" } }, sourceSeqs: { type: "array", items: { type: "integer" } } },
+            required: ["title", "acceptanceCriteria", "sourceSeqs"],
+          },
+        },
+      },
       { type: "function", function: { name: "send_message", description: "在群里发消息", parameters: { type: "object", properties: { body: { type: "string" } }, required: ["body"] } } },
     ],
     messages: [
@@ -94,7 +110,11 @@ for (const model of models) {
   const w = await call(model, { messages: [{ role: "user", content: "hi" }], options: { num_predict: 4 } });
   const runs: Record<string, Res[]> = { json: [], tool: [], summary: [] };
   for (let i = 0; i < reps; i++) {
-    for (const [k, fn] of [["json", jsonTask], ["tool", toolTask], ["summary", summaryTask]] as const) {
+    for (const [k, fn] of [
+      ["json", jsonTask],
+      ["tool", toolTask],
+      ["summary", summaryTask],
+    ] as const) {
       try {
         runs[k]!.push(await fn(model));
       } catch (e) {
@@ -105,11 +125,25 @@ for (const model of models) {
   const agg = Object.fromEntries(
     Object.entries(runs).map(([k, rs]) => {
       const sum = (f: (r: Res) => number) => rs.reduce((a, r) => a + f(r), 0);
-      return [k, { pass: `${rs.filter((r) => r.ok).length}/${rs.length}`, avgMs: Math.round(sum((r) => r.ms) / rs.length), avgOutTok: Math.round(sum((r) => r.evalTok) / rs.length), genTokPerSec: +(sum((r) => r.evalTok) / (sum((r) => r.evalMs) / 1000 || 1)).toFixed(2), promptTokPerSec: +(sum((r) => r.promptTok) / (sum((r) => r.promptMs) / 1000 || 1)).toFixed(1), samples: rs.map((r) => r.detail) }];
+      return [
+        k,
+        {
+          pass: `${rs.filter((r) => r.ok).length}/${rs.length}`,
+          avgMs: Math.round(sum((r) => r.ms) / rs.length),
+          avgOutTok: Math.round(sum((r) => r.evalTok) / rs.length),
+          genTokPerSec: +(sum((r) => r.evalTok) / (sum((r) => r.evalMs) / 1000 || 1)).toFixed(2),
+          promptTokPerSec: +(sum((r) => r.promptTok) / (sum((r) => r.promptMs) / 1000 || 1)).toFixed(1),
+          samples: rs.map((r) => r.detail),
+        },
+      ];
     }),
   );
   results[model] = { loadMs: Math.round(w.ms), think, ...agg };
-  console.log(model, `think=${think}`, JSON.stringify(agg, (k, v) => (k === "samples" ? undefined : v)));
+  console.log(
+    model,
+    `think=${think}`,
+    JSON.stringify(agg, (k, v) => (k === "samples" ? undefined : v)),
+  );
   await Bun.write(outFile, JSON.stringify({ base: BASE, ollama: "0.40.16", host: "8 vCPU, 15 GB RAM, no GPU", reps, results }, null, 2));
 }
 console.log("wrote", outFile);

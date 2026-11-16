@@ -1,0 +1,5 @@
+* @agent-platform/maintainers
+/apps/server/src/db/ @agent-platform/maintainers
+/apps/server/src/core/ @agent-platform/maintainers
+/packages/shared/src/state-machine.ts @agent-platform/maintainers
+/packages/shared/src/permissions.ts @agent-platform/maintainers

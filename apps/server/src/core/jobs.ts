@@ -19,7 +19,10 @@ export type JobRow = typeof job.$inferSelect;
 export type JobHandler = (payload: Record<string, unknown>, ctx: { job: JobRow; heartbeat: () => Promise<void> }) => Promise<void>;
 
 export class RetryLater extends Error {
-  constructor(readonly delayMs: number, message = "retry later") {
+  constructor(
+    readonly delayMs: number,
+    message = "retry later",
+  ) {
     super(message);
   }
 }
@@ -95,7 +98,10 @@ export function createJobs(db: Database, opts: { owner: string; leaseMs?: number
   async function runJob(j: JobRow) {
     const h = handlers.get(j.type);
     const heartbeat = async () => {
-      await db.root.update(job).set({ heartbeatAt: new Date(), leaseUntil: new Date(Date.now() + leaseMs) }).where(and(eq(job.id, j.id), eq(job.leaseOwner, opts.owner)));
+      await db.root
+        .update(job)
+        .set({ heartbeatAt: new Date(), leaseUntil: new Date(Date.now() + leaseMs) })
+        .where(and(eq(job.id, j.id), eq(job.leaseOwner, opts.owner)));
     };
     try {
       if (!h) throw new Error(`no handler for job type ${j.type}`);
@@ -109,13 +115,30 @@ export function createJobs(db: Database, opts: { owner: string; leaseMs?: number
       await db.root.update(job).set({ status: "succeeded", leaseOwner: null, leaseUntil: null, updatedAt: new Date() }).where(eq(job.id, j.id));
       if (j.cron?.startsWith("every:")) {
         const every = Number(j.cron.slice(6));
-        await enqueue(j.type, j.payload, { runAt: new Date(Date.now() + every), dedupeKey: j.dedupeKey ?? undefined, cron: j.cron, tenantId: j.tenantId, concurrencyKey: j.concurrencyKey ?? undefined });
+        await enqueue(j.type, j.payload, {
+          runAt: new Date(Date.now() + every),
+          dedupeKey: j.dedupeKey ?? undefined,
+          cron: j.cron,
+          tenantId: j.tenantId,
+          concurrencyKey: j.concurrencyKey ?? undefined,
+        });
       }
     } catch (e) {
       const err = e as Error;
       if (err instanceof RetryLater) {
         // Not a failure: reschedule without consuming an attempt.
-        await db.root.update(job).set({ status: "queued", attempts: Math.max(0, j.attempts - 1), runAt: new Date(Date.now() + err.delayMs), leaseOwner: null, leaseUntil: null, lastError: err.message, updatedAt: new Date() }).where(eq(job.id, j.id));
+        await db.root
+          .update(job)
+          .set({
+            status: "queued",
+            attempts: Math.max(0, j.attempts - 1),
+            runAt: new Date(Date.now() + err.delayMs),
+            leaseOwner: null,
+            leaseUntil: null,
+            lastError: err.message,
+            updatedAt: new Date(),
+          })
+          .where(eq(job.id, j.id));
         return;
       }
       const dead = j.attempts >= j.maxAttempts;
@@ -123,9 +146,25 @@ export function createJobs(db: Database, opts: { owner: string; leaseMs?: number
       const backoff = Math.min(1000 * 2 ** j.attempts, 5 * 60_000) * (0.75 + Math.random() * 0.5);
       await db.root
         .update(job)
-        .set({ status: dead ? "dead" : "queued", runAt: new Date(Date.now() + backoff), leaseOwner: null, leaseUntil: null, lastError: (err.stack ?? err.message).slice(0, 2000), updatedAt: new Date() })
+        .set({
+          status: dead ? "dead" : "queued",
+          runAt: new Date(Date.now() + backoff),
+          leaseOwner: null,
+          leaseUntil: null,
+          lastError: (err.stack ?? err.message).slice(0, 2000),
+          updatedAt: new Date(),
+        })
         .where(eq(job.id, j.id));
-      if (dead) await db.root.insert(deadLetter).values({ id: newId("dlq"), tenantId: j.tenantId, source: "job", refId: j.id, payload: { type: j.type, payload: j.payload }, error: (err.stack ?? err.message).slice(0, 4000), attempts: j.attempts });
+      if (dead)
+        await db.root.insert(deadLetter).values({
+          id: newId("dlq"),
+          tenantId: j.tenantId,
+          source: "job",
+          refId: j.id,
+          payload: { type: j.type, payload: j.payload },
+          error: (err.stack ?? err.message).slice(0, 4000),
+          attempts: j.attempts,
+        });
     }
   }
 
@@ -159,10 +198,17 @@ export function createJobs(db: Database, opts: { owner: string; leaseMs?: number
       return total;
     },
     async releaseOwned() {
-      await db.root.update(job).set({ status: "queued", leaseOwner: null, leaseUntil: null }).where(and(eq(job.status, "running"), eq(job.leaseOwner, opts.owner)));
+      await db.root
+        .update(job)
+        .set({ status: "queued", leaseOwner: null, leaseUntil: null })
+        .where(and(eq(job.status, "running"), eq(job.leaseOwner, opts.owner)));
     },
     async counts() {
-      const rows = await db.root.select({ status: job.status, n: sql<number>`count(*)::int` }).from(job).where(inArray(job.status, ["queued", "running", "dead", "failed"])).groupBy(job.status);
+      const rows = await db.root
+        .select({ status: job.status, n: sql<number>`count(*)::int` })
+        .from(job)
+        .where(inArray(job.status, ["queued", "running", "dead", "failed"]))
+        .groupBy(job.status);
       return Object.fromEntries(rows.map((r) => [r.status, r.n])) as Record<string, number>;
     },
   };

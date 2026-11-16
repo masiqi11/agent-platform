@@ -28,13 +28,13 @@
   "devDependencies": {
     "@ap/server": "workspace:*",
     "@ap/shared": "workspace:*",
-    "vite": "8.3.8",
-    "@vitejs/plugin-react": "6.3.0",
-    "tailwindcss": "4.3.5",
+    "@axe-core/playwright": "latest",
+    "@playwright/test": "1.65.1",
     "@tailwindcss/vite": "4.3.5",
     "@types/react": "latest",
     "@types/react-dom": "latest",
-    "@playwright/test": "1.65.1",
-    "@axe-core/playwright": "latest"
+    "@vitejs/plugin-react": "6.3.0",
+    "tailwindcss": "4.3.5",
+    "vite": "8.3.8"
   }
 }

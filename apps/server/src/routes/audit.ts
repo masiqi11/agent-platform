@@ -37,7 +37,11 @@ export const auditRoutes = (s: Services) =>
   new Elysia({ prefix: "/api/v1/audit" })
     .use(base(s))
     .get("/", { query: Filter, response: t.Object({ items: t.Array(Entry), nextCursor: t.Union([t.String(), t.Null()]) }) }, async ({ auth, query }) => s.auditQuery.list(await auth(), query))
-    .get("/verify", { response: t.Object({ ok: t.Boolean(), count: t.Number(), brokenAt: t.Union([t.Number(), t.Null()]), head: t.Union([t.String(), t.Null()]), checkedAt: t.String() }) }, async ({ auth }) => s.auditQuery.verify(await auth()))
+    .get(
+      "/verify",
+      { response: t.Object({ ok: t.Boolean(), count: t.Number(), brokenAt: t.Union([t.Number(), t.Null()]), head: t.Union([t.String(), t.Null()]), checkedAt: t.String() }) },
+      async ({ auth }) => s.auditQuery.verify(await auth()),
+    )
     .get("/export", { query: t.Object({ ...filterProps, format: t.Optional(t.Union([t.Literal("csv"), t.Literal("jsonl")])) }) }, async ({ auth, query, set }) => {
       const format = query.format ?? "csv";
       const r = await s.auditQuery.exportRows(await auth(), query, format);

@@ -1,0 +1,61 @@
+import { afterAll, beforeAll, describe, expect, test } from "bun:test";
+import { signupGrant } from "../src/auth";
+import { tenant } from "../src/db/schema";
+import { newId } from "../src/core/ids";
+import { createTestApp, type TestApp } from "./helpers";
+
+/**
+ * INV-11 framework (§9.7 / S1): enumerate every route that takes an id, call it with tenant B's
+ * session using ids that belong to tenant A, and require 404/403 — never data. New routes are
+ * picked up automatically; a route whose param has no fixture fails the test so it can't be skipped.
+ */
+let t: TestApp;
+const PW = "Correct-Horse-42";
+let tokenB = "";
+const fixtures: Record<string, string> = {};
+
+/** Routes that are intentionally public or token-addressed (the token itself is the secret). */
+const PUBLIC = new Set(["POST /api/v1/invitations/:token/accept"]);
+
+beforeAll(async () => {
+  t = await createTestApp("isolation");
+  const a = await t.req("POST", "/api/v1/setup", { body: { tenantName: "A", email: "a@a.test", name: "A", password: PW } });
+  const meA = (await t.req("GET", "/api/v1/me", { token: a.body.token })).body;
+  fixtures.id = meA.userId; // users/:id
+  // Tenant B (second tenant created directly; self-host normally has one).
+  const tb = newId("ten");
+  await t.s.db.root.insert(tenant).values({ id: tb, name: "B", domain: "b.test" });
+  await signupGrant.run({ tenantId: tb, tenantRole: "owner" }, () => t.s.auth.api.signUpEmail({ body: { email: "b@b.test", name: "B", password: PW } }));
+  tokenB = await t.s.identity.signIn("b@b.test", PW);
+  // Seed audit rows in A so list endpoints have something to leak.
+  await t.req("POST", "/api/v1/invitations", { token: a.body.token, body: { tenantRole: "member" } });
+});
+afterAll(async () => t?.close());
+
+describe("INV-11 tenant isolation (route enumeration)", () => {
+  test("every id-bearing route rejects cross-tenant access", async () => {
+    const routes = (t.app as unknown as { routes: Array<{ method: string; path: string }> }).routes.filter((r) => r.path.includes(":") && r.path.startsWith("/api/v1"));
+    expect(routes.length).toBeGreaterThan(0);
+    const checked: string[] = [];
+    for (const r of routes) {
+      const key = `${r.method} ${r.path}`;
+      if (PUBLIC.has(key)) continue;
+      const params = [...r.path.matchAll(/:(\w+)/g)].map((m) => m[1]!);
+      for (const p of params) if (!fixtures[p]) throw new Error(`no isolation fixture for param :${p} in ${key}`);
+      const path = r.path.replace(/:(\w+)/g, (_, p) => fixtures[p]!);
+      const res = await t.req(r.method, path, { token: tokenB, body: r.method === "GET" ? undefined : {} });
+      expect([400, 403, 404]).toContain(res.status);
+      if (res.status === 400) expect(res.body.error).toBe("invalid"); // body validation ran before lookup; still no data
+      checked.push(key);
+    }
+    expect(checked.length).toBeGreaterThan(0);
+  });
+
+  test("tenant-scoped lists never include other tenants' rows", async () => {
+    const users = await t.req("GET", "/api/v1/users", { token: tokenB });
+    expect(users.status).toBe(200);
+    expect(users.body.map((u: { email: string }) => u.email)).toEqual(["b@b.test"]);
+    const audit = await t.req("GET", "/api/v1/audit?limit=200", { token: tokenB });
+    expect(audit.body.items.every((x: { action: string }) => x.action !== "invitation.create")).toBe(true);
+  });
+});

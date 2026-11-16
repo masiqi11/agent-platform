@@ -6,7 +6,10 @@ if (!BASE) throw new Error("TEST_DATABASE_URL is required (see apps/server/.env.
 
 /** Creates an isolated database (one per test file) on real Postgres 16 + pgvector (§17.2). */
 export async function createTestDatabase(label = "t"): Promise<{ url: string; drop: () => Promise<void> }> {
-  const name = `ap_${label.replace(/[^a-z0-9]/gi, "").toLowerCase().slice(0, 20)}_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 6)}`;
+  const name = `ap_${label
+    .replace(/[^a-z0-9]/gi, "")
+    .toLowerCase()
+    .slice(0, 20)}_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 6)}`;
   const admin = new pg.Client({ connectionString: BASE });
   await admin.connect();
   await admin.query(`create database ${name}`);
@@ -50,7 +53,7 @@ export async function createTestApp(label: string, env: Record<string, string> =
     app,
     url: db.url,
     async req(method, path, opts = {}) {
-      const headers: Record<string, string> = { ...(opts.headers ?? {}) };
+      const headers: Record<string, string> = { ...opts.headers };
       if (opts.body !== undefined) headers["content-type"] = "application/json";
       if (opts.token) headers.authorization = `Bearer ${opts.token}`;
       const res = await app.handle(new Request(`http://localhost${path}`, { method, headers, body: opts.body !== undefined ? JSON.stringify(opts.body) : undefined }));

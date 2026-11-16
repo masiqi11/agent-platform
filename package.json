@@ -1,9 +1,11 @@
 {
   "name": "agent-platform",
   "private": true,
+  "workspaces": [
+    "apps/*",
+    "packages/*"
+  ],
   "type": "module",
-  "packageManager": "bun@1.4.4",
-  "workspaces": ["apps/*", "packages/*"],
   "scripts": {
     "dev": "bun scripts/dev.ts",
     "build": "turbo build",
@@ -19,11 +21,12 @@
     "e2e": "cd apps/web && bun x --no-install playwright test"
   },
   "devDependencies": {
-    "turbo": "2.11.11",
-    "typescript": "7.0.2",
+    "@types/bun": "latest",
+    "oxfmt": "0.78.0",
     "oxlint": "1.93.0",
     "oxlint-tsgolint": "7.0.2007",
-    "oxfmt": "0.78.0",
-    "@types/bun": "latest"
-  }
+    "turbo": "2.11.11",
+    "typescript": "7.0.2"
+  },
+  "packageManager": "bun@1.4.4"
 }

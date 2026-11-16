@@ -22,7 +22,20 @@ const GENESIS = "0".repeat(64);
 const sha256 = (s: string) => createHash("sha256").update(s).digest("hex");
 
 /** Fields that participate in the hash, normalised to canonical JSON (TRAP-02). */
-function hashContent(r: { tenantId: string; seq: number; actorPrincipalId: string; action: string; resourceType: string; resourceId: string; before: unknown; after: unknown; policy: unknown; outcome: string; traceId: string; createdAt: Date }) {
+function hashContent(r: {
+  tenantId: string;
+  seq: number;
+  actorPrincipalId: string;
+  action: string;
+  resourceType: string;
+  resourceId: string;
+  before: unknown;
+  after: unknown;
+  policy: unknown;
+  outcome: string;
+  traceId: string;
+  createdAt: Date;
+}) {
   return canonicalJson({
     tenantId: r.tenantId,
     seq: r.seq,
@@ -83,7 +96,12 @@ export function createAudit(db: Database) {
     let lastSeq = 0;
     const pageSize = 1000;
     for (;;) {
-      const rows = await db.root.select().from(auditLog).where(and(eq(auditLog.tenantId, tenantId), sql`${auditLog.seq} > ${lastSeq}`)).orderBy(asc(auditLog.seq)).limit(pageSize);
+      const rows = await db.root
+        .select()
+        .from(auditLog)
+        .where(and(eq(auditLog.tenantId, tenantId), sql`${auditLog.seq} > ${lastSeq}`))
+        .orderBy(asc(auditLog.seq))
+        .limit(pageSize);
       if (rows.length === 0) break;
       for (const r of rows) {
         const expected = sha256(prev + hashContent({ ...r, outcome: r.outcome }));

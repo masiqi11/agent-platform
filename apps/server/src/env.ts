@@ -8,9 +8,7 @@ export const DEV_DEFAULTS = {
   MASTER_KEY: "dev-insecure-master-key-change-me-0000000000000",
 } as const;
 
-const bool = z
-  .enum(["true", "false", "1", "0"])
-  .transform((v) => v === "true" || v === "1");
+const bool = z.enum(["true", "false", "1", "0"]).transform((v) => v === "true" || v === "1");
 
 export const serverSchema = {
   NODE_ENV: z.enum(["development", "test", "production"]).default("development"),
@@ -75,7 +73,9 @@ export function loadEnv(runtimeEnv: Record<string, string | undefined> = process
     runtimeEnv,
     emptyStringAsUndefined: true,
     onValidationError: (issues) => {
-      const names = [...new Set(issues.map((i) => String(i.path?.[0] ?? "?")))];
+      const names = [
+        ...new Set(issues.map((i) => ((p) => (typeof p === "object" && p !== null && "key" in p ? String(p.key) : typeof p === "string" || typeof p === "number" ? String(p) : "?"))(i.path?.[0]))),
+      ];
       // eslint-disable-next-line no-console -- logger not yet initialised at this point
       console.error(`[config] 环境变量校验失败：${names.join(", ")}`);
       throw new Error(`invalid env: ${names.join(", ")}`);

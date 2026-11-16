@@ -130,7 +130,12 @@ describe("INV-14 audit log append-only with verifiable hash chain", () => {
 
   test("secrets are scrubbed from audit rows (INV-17)", async () => {
     const audit = createAudit(db);
-    await audit.write(ctx, { action: "cred.create", resourceType: "credential", resourceId: "cred_1", after: { name: "gl", token: "glpat-abcdefghijklmnopqrstuvwx", note: "key sk-abcdefghijklmnopqrstuvwxyz0123" } });
+    await audit.write(ctx, {
+      action: "cred.create",
+      resourceType: "credential",
+      resourceId: "cred_1",
+      after: { name: "gl", token: "glpat-abcdefghijklmnopqrstuvwx", note: "key sk-abcdefghijklmnopqrstuvwxyz0123" },
+    });
     const [row] = await db.root.select().from(auditLog).where(eq(auditLog.resourceId, "cred_1"));
     expect(JSON.stringify(row!.after)).not.toContain("glpat-");
     expect(JSON.stringify(row!.after)).not.toContain("sk-abc");
@@ -208,10 +213,14 @@ describe("event consumers", () => {
     let flaky = 0;
     const runner = createConsumerRunner(db, { owner: "r1", maxAttempts: 2 });
     runner.register({ name: "good", types: ["project.created"], handle: async (e) => void got.push(e.seq) });
-    runner.register({ name: "bad", types: ["project.created"], handle: async () => {
-      flaky++;
-      throw new Error("always");
-    } });
+    runner.register({
+      name: "bad",
+      types: ["project.created"],
+      handle: async () => {
+        flaky++;
+        throw new Error("always");
+      },
+    });
     await runner.init();
     for (let i = 0; i < 3; i++) await db.tx(() => events.emit(ctx, { type: "project.created", aggregateType: "project", aggregateId: `p${i}` }));
     await runner.drain();

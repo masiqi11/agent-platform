@@ -2,28 +2,12 @@
  * Task state machine (spec §12.6). This file is the single source of truth:
  * any transition not listed here is illegal.
  */
-export const TASK_STATUSES = [
-  "backlog",
-  "ready",
-  "in_progress",
-  "blocked",
-  "in_review",
-  "testing",
-  "done",
-  "cancelled",
-] as const;
+export const TASK_STATUSES = ["backlog", "ready", "in_progress", "blocked", "in_review", "testing", "done", "cancelled"] as const;
 export type TaskStatus = (typeof TASK_STATUSES)[number];
 export const TERMINAL_STATUSES: readonly TaskStatus[] = ["done", "cancelled"];
 
 /** Roles an actor can hold *relative to one task*; computed server-side. */
-export type TaskActorRole =
-  | "human_owner"
-  | "maintainer"
-  | "assignee_agent"
-  | "reviewer_agent"
-  | "human_reviewer"
-  | "tester_agent"
-  | "merge_queue";
+export type TaskActorRole = "human_owner" | "maintainer" | "assignee_agent" | "reviewer_agent" | "human_reviewer" | "tester_agent" | "merge_queue";
 
 /** Facts used by guards, computed by `tasks.facts(task)` on the server. */
 export interface TaskFacts {
@@ -138,39 +122,50 @@ export function findRule(from: TaskStatus, to: TaskStatus): TransitionRule | und
 function guardHolds(g: GuardKey, f: TaskFacts, input: TransitionInput): boolean {
   const nonEmpty = (s?: string) => typeof s === "string" && s.trim().length > 0;
   switch (g) {
-    case "title": return f.hasTitle;
-    case "acceptance_criteria": return f.hasAcceptanceCriteria;
-    case "assignee": return f.hasAssignee;
-    case "human_owner": return f.hasHumanOwner;
-    case "workspace_ready": return f.workspaceReady;
-    case "blocked_reason": return nonEmpty(input.reason);
-    case "blocked_needs": return nonEmpty(input.needs);
-    case "blocker_resolved": return f.openBlockers === 0;
-    case "mr_opened": return f.mrOpened;
-    case "ci_passed": return f.ciPassed;
-    case "evidence": return f.evidenceComplete;
-    case "review_approved": return f.reviewApproved;
-    case "test_plan": return f.testPlanExists;
-    case "change_request": return nonEmpty(input.reason);
-    case "test_passed": return f.testPassed;
-    case "merged": return f.merged;
-    case "issue_closed": return f.issueClosed;
-    case "failure_evidence": return nonEmpty(input.evidenceArtifactId) || nonEmpty(input.reason);
-    case "cancel_reason": return nonEmpty(input.reason);
+    case "title":
+      return f.hasTitle;
+    case "acceptance_criteria":
+      return f.hasAcceptanceCriteria;
+    case "assignee":
+      return f.hasAssignee;
+    case "human_owner":
+      return f.hasHumanOwner;
+    case "workspace_ready":
+      return f.workspaceReady;
+    case "blocked_reason":
+      return nonEmpty(input.reason);
+    case "blocked_needs":
+      return nonEmpty(input.needs);
+    case "blocker_resolved":
+      return f.openBlockers === 0;
+    case "mr_opened":
+      return f.mrOpened;
+    case "ci_passed":
+      return f.ciPassed;
+    case "evidence":
+      return f.evidenceComplete;
+    case "review_approved":
+      return f.reviewApproved;
+    case "test_plan":
+      return f.testPlanExists;
+    case "change_request":
+      return nonEmpty(input.reason);
+    case "test_passed":
+      return f.testPassed;
+    case "merged":
+      return f.merged;
+    case "issue_closed":
+      return f.issueClosed;
+    case "failure_evidence":
+      return nonEmpty(input.evidenceArtifactId) || nonEmpty(input.reason);
+    case "cancel_reason":
+      return nonEmpty(input.reason);
   }
 }
 
-export type TransitionCheck =
-  | { ok: true; rule: TransitionRule }
-  | { ok: false; code: "no_such_transition" | "actor_not_allowed" | "guard_failed"; reason: string; missing: GuardKey[] };
+export type TransitionCheck = { ok: true; rule: TransitionRule } | { ok: false; code: "no_such_transition" | "actor_not_allowed" | "guard_failed"; reason: string; missing: GuardKey[] };
 
-export function checkTransition(
-  from: TaskStatus,
-  to: TaskStatus,
-  roles: ReadonlySet<TaskActorRole>,
-  facts: TaskFacts,
-  input: TransitionInput = {},
-): TransitionCheck {
+export function checkTransition(from: TaskStatus, to: TaskStatus, roles: ReadonlySet<TaskActorRole>, facts: TaskFacts, input: TransitionInput = {}): TransitionCheck {
   const rule = findRule(from, to);
   if (!rule) {
     return { ok: false, code: "no_such_transition", reason: `不存在 ${STATUS_LABELS[from]} → ${STATUS_LABELS[to]} 的迁移`, missing: [] };

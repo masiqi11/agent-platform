@@ -159,7 +159,8 @@ export function UsersPage() {
   const [disabling, setDisabling] = useState<{ id: string; name: string } | null>(null);
   const [resetUrl, setResetUrl] = useState<string | null>(null);
   const update = useMutation({
-    mutationFn: (v: { id: string; tenantRole?: Role; status?: "active" }) => unwrap(api.api.v1.users({ id: v.id }).patch({ ...(v.tenantRole ? { tenantRole: v.tenantRole } : {}), ...(v.status ? { status: v.status } : {}) })),
+    mutationFn: (v: { id: string; tenantRole?: Role; status?: "active" }) =>
+      unwrap(api.api.v1.users({ id: v.id }).patch({ ...(v.tenantRole ? { tenantRole: v.tenantRole } : {}), ...(v.status ? { status: v.status } : {}) })),
     onSuccess: () => {
       toast.success("已更新");
       void queryClient.invalidateQueries({ queryKey: qk.users });
@@ -185,13 +186,27 @@ export function UsersPage() {
         <ErrorState error={users.error} onRetry={() => void users.refetch()} />
       ) : users.data.length <= 1 ? (
         <>
-          <UsersTable rows={users.data} meId={me?.userId ?? null} onRole={(id, r) => update.mutate({ id, tenantRole: r })} onDisable={setDisabling} onEnable={(id) => update.mutate({ id, status: "active" })} onReset={(id) => reset.mutate(id)} />
+          <UsersTable
+            rows={users.data}
+            meId={me?.userId ?? null}
+            onRole={(id, r) => update.mutate({ id, tenantRole: r })}
+            onDisable={setDisabling}
+            onEnable={(id) => update.mutate({ id, status: "active" })}
+            onReset={(id) => reset.mutate(id)}
+          />
           <div className="mt-6">
             <EmptyState icon={UserPlus} title="邀请你的同事" body={t("users.empty")} action={<Button onClick={() => setInvite(true)}>{t("users.invite")}</Button>} />
           </div>
         </>
       ) : (
-        <UsersTable rows={users.data} meId={me?.userId ?? null} onRole={(id, r) => update.mutate({ id, tenantRole: r })} onDisable={setDisabling} onEnable={(id) => update.mutate({ id, status: "active" })} onReset={(id) => reset.mutate(id)} />
+        <UsersTable
+          rows={users.data}
+          meId={me?.userId ?? null}
+          onRole={(id, r) => update.mutate({ id, tenantRole: r })}
+          onDisable={setDisabling}
+          onEnable={(id) => update.mutate({ id, status: "active" })}
+          onReset={(id) => reset.mutate(id)}
+        />
       )}
       <InviteDialog open={invite} onOpenChange={setInvite} />
       <DisableDialog user={disabling} onOpenChange={(v) => !v && setDisabling(null)} />
@@ -209,7 +224,21 @@ export function UsersPage() {
 }
 
 type Row = { id: string; email: string; name: string; tenantRole: string; status: string; createdAt: string };
-function UsersTable({ rows, meId, onRole, onDisable, onEnable, onReset }: { rows: Row[]; meId: string | null; onRole(id: string, r: Role): void; onDisable(u: { id: string; name: string }): void; onEnable(id: string): void; onReset(id: string): void }) {
+function UsersTable({
+  rows,
+  meId,
+  onRole,
+  onDisable,
+  onEnable,
+  onReset,
+}: {
+  rows: Row[];
+  meId: string | null;
+  onRole(id: string, r: Role): void;
+  onDisable(u: { id: string; name: string }): void;
+  onEnable(id: string): void;
+  onReset(id: string): void;
+}) {
   return (
     <div className="overflow-hidden rounded-lg border bg-card">
       <Table>

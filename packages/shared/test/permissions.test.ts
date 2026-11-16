@@ -58,8 +58,7 @@ describe("permission matrix §9.7", () => {
     expect(can(A("dev", false), "message.send").allowed).toBe(false);
   });
   test("INV-07 captain tool set has no state-changing tool", () => {
-    for (const role of ["captain", "sub_captain"] as const)
-      for (const t of CAPTAIN_FORBIDDEN_TOOLS) expect(AGENT_TOOL_ROLES[role]).not.toContain(t);
+    for (const role of ["captain", "sub_captain"] as const) for (const t of CAPTAIN_FORBIDDEN_TOOLS) expect(AGENT_TOOL_ROLES[role]).not.toContain(t);
   });
   test("denial carries required role", () => {
     const d = can(H("member", "member"), "merge.approve");

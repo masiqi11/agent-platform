@@ -29,7 +29,12 @@ export function createIdentity(d: IdentityDeps) {
   const { db, config } = d;
 
   async function systemPrincipal(tenantId: string): Promise<string> {
-    const [p] = await db.q().select().from(principal).where(and(eq(principal.tenantId, tenantId), eq(principal.kind, "system"))).limit(1);
+    const [p] = await db
+      .q()
+      .select()
+      .from(principal)
+      .where(and(eq(principal.tenantId, tenantId), eq(principal.kind, "system")))
+      .limit(1);
     if (p) return p.id;
     const id = newId("prn");
     await db.q().insert(principal).values({ id, tenantId, kind: "system", refId: null, displayName: "系统" });
@@ -54,7 +59,10 @@ export function createIdentity(d: IdentityDeps) {
         tenantId = newId("ten");
         await q.insert(tenant).values({ id: tenantId, name: domain || "默认租户", domain });
       }
-      const [existing] = await q.select().from(appUser).where(and(eq(appUser.tenantId, tenantId), eq(appUser.email, user.email)));
+      const [existing] = await q
+        .select()
+        .from(appUser)
+        .where(and(eq(appUser.tenantId, tenantId), eq(appUser.email, user.email)));
       const sys = await systemCtx(tenantId);
       if (existing) {
         await q.update(appUser).set({ authUserId: user.id, updatedAt: new Date() }).where(eq(appUser.id, existing.id));
@@ -74,7 +82,11 @@ export function createIdentity(d: IdentityDeps) {
   }
 
   async function actorForUser(u: AppUserRow): Promise<Actor> {
-    const [p] = await db.root.select().from(principal).where(and(eq(principal.tenantId, u.tenantId), eq(principal.kind, "human"), eq(principal.refId, u.id))).limit(1);
+    const [p] = await db.root
+      .select()
+      .from(principal)
+      .where(and(eq(principal.tenantId, u.tenantId), eq(principal.kind, "human"), eq(principal.refId, u.id)))
+      .limit(1);
     if (!p) throw new DomainError("unauthenticated", "账号未初始化");
     return { principalId: p.id, kind: "human", displayName: u.name, userId: u.id, tenantRole: u.tenantRole };
   }
@@ -87,7 +99,10 @@ export function createIdentity(d: IdentityDeps) {
     if (looksLikeAgentToken(token)) {
       const p = verifyAgentToken(token, [config.jwt.secret, config.jwt.previous]);
       if (!p) throw new DomainError("unauthenticated", "Agent 令牌无效或已过期");
-      const [a] = await db.root.select().from(agent).where(and(eq(agent.id, p.agent_id), eq(agent.tenantId, p.tenant_id)));
+      const [a] = await db.root
+        .select()
+        .from(agent)
+        .where(and(eq(agent.id, p.agent_id), eq(agent.tenantId, p.tenant_id)));
       if (!a || a.status === "disabled" || a.tokenVersion !== p.token_version) throw new DomainError("unauthenticated", "Agent 已停用或令牌已撤销");
       await d.rateLimiter.hit("agent_token", a.id);
       return {
@@ -110,7 +125,11 @@ export function createIdentity(d: IdentityDeps) {
     if (a.kind === "system") return { kind: "system" };
     let pm: { role: "maintainer" | "member" | "viewer" } | undefined;
     if (projectId) {
-      [pm] = await db.q().select({ role: projectMember.role }).from(projectMember).where(and(eq(projectMember.projectId, projectId), eq(projectMember.principalId, a.principalId), eq(projectMember.tenantId, ctx.tenantId)));
+      [pm] = await db
+        .q()
+        .select({ role: projectMember.role })
+        .from(projectMember)
+        .where(and(eq(projectMember.projectId, projectId), eq(projectMember.principalId, a.principalId), eq(projectMember.tenantId, ctx.tenantId)));
     }
     if (a.kind === "agent") {
       const inScope = !projectId || !a.projectScope || a.projectScope.includes(projectId);
@@ -133,7 +152,11 @@ export function createIdentity(d: IdentityDeps) {
 
   /** Project in caller's tenant, else 404 (INV-11). */
   async function projectInTenant(ctx: Ctx, projectId: string) {
-    const [p] = await db.q().select().from(project).where(and(eq(project.id, projectId), eq(project.tenantId, ctx.tenantId)));
+    const [p] = await db
+      .q()
+      .select()
+      .from(project)
+      .where(and(eq(project.id, projectId), eq(project.tenantId, ctx.tenantId)));
     if (!p) throw notFound("项目");
     return p;
   }
@@ -189,7 +212,17 @@ export function createIdentity(d: IdentityDeps) {
     const id = newId("inv");
     const expiresAt = new Date(Date.now() + (input.ttlHours ?? 72) * 3600_000);
     await db.tx(async (q) => {
-      await q.insert(invitation).values({ id, tenantId: ctx.tenantId, email: input.email?.toLowerCase() ?? null, tenantRole: input.tenantRole, projectId: input.projectId ?? null, projectRole: input.projectRole ?? null, tokenHash: sha256Hex(token), expiresAt, createdBy: ctx.actor.principalId });
+      await q.insert(invitation).values({
+        id,
+        tenantId: ctx.tenantId,
+        email: input.email?.toLowerCase() ?? null,
+        tenantRole: input.tenantRole,
+        projectId: input.projectId ?? null,
+        projectRole: input.projectRole ?? null,
+        tokenHash: sha256Hex(token),
+        expiresAt,
+        createdBy: ctx.actor.principalId,
+      });
       await d.events.emit(ctx, { type: "invitation.created", aggregateType: "invitation", aggregateId: id });
       await d.audit.write(ctx, { action: "invitation.create", resourceType: "invitation", resourceId: id, after: { email: input.email, tenantRole: input.tenantRole, projectId: input.projectId } });
     });
@@ -197,20 +230,33 @@ export function createIdentity(d: IdentityDeps) {
   }
 
   async function acceptInvitation(token: string, input: { email: string; name: string; password: string }) {
-    const [inv] = await db.root.select().from(invitation).where(and(eq(invitation.tokenHash, sha256Hex(token)), eq(invitation.kind, "invite"), isNull(invitation.usedAt), gt(invitation.expiresAt, new Date())));
+    const [inv] = await db.root
+      .select()
+      .from(invitation)
+      .where(and(eq(invitation.tokenHash, sha256Hex(token)), eq(invitation.kind, "invite"), isNull(invitation.usedAt), gt(invitation.expiresAt, new Date())));
     if (!inv) throw new DomainError("not_found", "邀请链接无效或已过期");
     const email = input.email.toLowerCase();
     if (inv.email && inv.email !== email) throw new DomainError("forbidden", "邀请邮箱不匹配", { required: inv.email });
     // Mark used first (single use even under concurrent accepts).
-    const used = await db.root.update(invitation).set({ usedAt: new Date() }).where(and(eq(invitation.id, inv.id), isNull(invitation.usedAt))).returning();
+    const used = await db.root
+      .update(invitation)
+      .set({ usedAt: new Date() })
+      .where(and(eq(invitation.id, inv.id), isNull(invitation.usedAt)))
+      .returning();
     if (used.length === 0) throw new DomainError("conflict", "邀请已被使用");
     await signUpInternal({ tenantId: inv.tenantId, tenantRole: inv.tenantRole as TenantRole, invitationId: inv.id }, email, input.name, input.password);
-    const [u] = await db.root.select().from(appUser).where(and(eq(appUser.tenantId, inv.tenantId), eq(appUser.email, email)));
+    const [u] = await db.root
+      .select()
+      .from(appUser)
+      .where(and(eq(appUser.tenantId, inv.tenantId), eq(appUser.email, email)));
     const sys = await systemCtx(inv.tenantId);
     const actor = await actorForUser(u!);
     await db.tx(async (q) => {
       if (inv.projectId && inv.projectRole) {
-        await q.insert(projectMember).values({ tenantId: inv.tenantId, projectId: inv.projectId, principalId: actor.principalId, role: inv.projectRole as "member" }).onConflictDoNothing();
+        await q
+          .insert(projectMember)
+          .values({ tenantId: inv.tenantId, projectId: inv.projectId, principalId: actor.principalId, role: inv.projectRole as "member" })
+          .onConflictDoNothing();
       }
       const ctx = { ...sys, actor };
       await d.events.emit(ctx, { type: "invitation.accepted", aggregateType: "invitation", aggregateId: inv.id, payload: { userId: u!.id } });
@@ -222,14 +268,28 @@ export function createIdentity(d: IdentityDeps) {
   async function listUsers(ctx: Ctx) {
     await require(ctx, "admin.users");
     const rows = await db.root.select().from(appUser).where(eq(appUser.tenantId, ctx.tenantId)).orderBy(asc(appUser.createdAt));
-    const prins = await db.root.select().from(principal).where(and(eq(principal.tenantId, ctx.tenantId), eq(principal.kind, "human")));
-    return rows.map((u) => ({ id: u.id, email: u.email, name: u.name, tenantRole: u.tenantRole, status: u.status, principalId: prins.find((p) => p.refId === u.id)?.id ?? null, createdAt: u.createdAt.toISOString() }));
+    const prins = await db.root
+      .select()
+      .from(principal)
+      .where(and(eq(principal.tenantId, ctx.tenantId), eq(principal.kind, "human")));
+    return rows.map((u) => ({
+      id: u.id,
+      email: u.email,
+      name: u.name,
+      tenantRole: u.tenantRole,
+      status: u.status,
+      principalId: prins.find((p) => p.refId === u.id)?.id ?? null,
+      createdAt: u.createdAt.toISOString(),
+    }));
   }
 
   /** Change role / disable. Disabling revokes all sessions immediately (§9.4). */
   async function updateUser(ctx: Ctx, userId: string, patch: { tenantRole?: TenantRole; status?: "active" | "disabled"; successorPrincipalId?: string; reason?: string }) {
     await require(ctx, "admin.users");
-    const [u] = await db.root.select().from(appUser).where(and(eq(appUser.id, userId), eq(appUser.tenantId, ctx.tenantId)));
+    const [u] = await db.root
+      .select()
+      .from(appUser)
+      .where(and(eq(appUser.id, userId), eq(appUser.tenantId, ctx.tenantId)));
     if (!u) throw notFound("用户");
     if (patch.tenantRole === "owner" && ctx.actor.tenantRole !== "owner") throw forbidden("Tenant Owner");
     if (u.id === ctx.actor.userId && patch.status === "disabled") throw new DomainError("conflict", "不能停用自己");
@@ -238,9 +298,17 @@ export function createIdentity(d: IdentityDeps) {
     await db.tx(async (q) => {
       if (patch.status === "disabled") {
         // TSK-补6 / §9.4: tasks where this user is the only human owner need a successor.
-        const owned = await q.select({ taskId: taskOwner.taskId }).from(taskOwner).innerJoin(task, eq(task.id, taskOwner.taskId)).where(and(eq(taskOwner.principalId, actor.principalId), eq(taskOwner.role, "owner"), eq(task.tenantId, ctx.tenantId)));
+        const owned = await q
+          .select({ taskId: taskOwner.taskId })
+          .from(taskOwner)
+          .innerJoin(task, eq(task.id, taskOwner.taskId))
+          .where(and(eq(taskOwner.principalId, actor.principalId), eq(taskOwner.role, "owner"), eq(task.tenantId, ctx.tenantId)));
         for (const o of owned) {
-          const others = await q.select().from(taskOwner).innerJoin(principal, eq(principal.id, taskOwner.principalId)).where(and(eq(taskOwner.taskId, o.taskId), eq(taskOwner.role, "owner"), eq(principal.kind, "human")));
+          const others = await q
+            .select()
+            .from(taskOwner)
+            .innerJoin(principal, eq(principal.id, taskOwner.principalId))
+            .where(and(eq(taskOwner.taskId, o.taskId), eq(taskOwner.role, "owner"), eq(principal.kind, "human")));
           if (others.filter((x) => x.task_owner.principalId !== actor.principalId).length === 0) {
             if (patch.successorPrincipalId) {
               await q.insert(taskOwner).values({ taskId: o.taskId, principalId: patch.successorPrincipalId, role: "owner" }).onConflictDoNothing();
@@ -249,9 +317,18 @@ export function createIdentity(d: IdentityDeps) {
         }
         if (orphanTasks.length > 0) throw new DomainError("conflict", `该用户是 ${orphanTasks.length} 个任务的唯一 owner，请先指定继任者`, { taskIds: orphanTasks });
       }
-      await q.update(appUser).set({ tenantRole: patch.tenantRole ?? u.tenantRole, status: patch.status ?? u.status, sessionVersion: u.sessionVersion + (patch.status === "disabled" ? 1 : 0), updatedAt: new Date() }).where(eq(appUser.id, u.id));
+      await q
+        .update(appUser)
+        .set({ tenantRole: patch.tenantRole ?? u.tenantRole, status: patch.status ?? u.status, sessionVersion: u.sessionVersion + (patch.status === "disabled" ? 1 : 0), updatedAt: new Date() })
+        .where(eq(appUser.id, u.id));
       await d.events.emit(ctx, { type: "user.updated", aggregateType: "user", aggregateId: u.id, payload: { status: patch.status ?? null, tenantRole: patch.tenantRole ?? null } });
-      await d.audit.write(ctx, { action: patch.status === "disabled" ? "user.disable" : "user.update", resourceType: "user", resourceId: u.id, before: { tenantRole: u.tenantRole, status: u.status }, after: patch });
+      await d.audit.write(ctx, {
+        action: patch.status === "disabled" ? "user.disable" : "user.update",
+        resourceType: "user",
+        resourceId: u.id,
+        before: { tenantRole: u.tenantRole, status: u.status },
+        after: patch,
+      });
     });
     if (patch.status === "disabled" && u.authUserId) {
       const c = await d.getAuth().$context;
@@ -262,12 +339,25 @@ export function createIdentity(d: IdentityDeps) {
 
   async function resetLink(ctx: Ctx, userId: string) {
     await require(ctx, "admin.users");
-    const [u] = await db.root.select().from(appUser).where(and(eq(appUser.id, userId), eq(appUser.tenantId, ctx.tenantId)));
+    const [u] = await db.root
+      .select()
+      .from(appUser)
+      .where(and(eq(appUser.id, userId), eq(appUser.tenantId, ctx.tenantId)));
     if (!u) throw notFound("用户");
     const token = randomToken(24);
     const id = newId("inv");
     await db.tx(async (q) => {
-      await q.insert(invitation).values({ id, tenantId: ctx.tenantId, email: u.email, tenantRole: u.tenantRole, kind: "password_reset", targetUserId: u.id, tokenHash: sha256Hex(token), expiresAt: new Date(Date.now() + 24 * 3600_000), createdBy: ctx.actor.principalId });
+      await q.insert(invitation).values({
+        id,
+        tenantId: ctx.tenantId,
+        email: u.email,
+        tenantRole: u.tenantRole,
+        kind: "password_reset",
+        targetUserId: u.id,
+        tokenHash: sha256Hex(token),
+        expiresAt: new Date(Date.now() + 24 * 3600_000),
+        createdBy: ctx.actor.principalId,
+      });
       await d.audit.write(ctx, { action: "user.reset_link", resourceType: "user", resourceId: u.id });
     });
     return { url: `${config.publicUrl}/reset/${token}` };
@@ -275,7 +365,10 @@ export function createIdentity(d: IdentityDeps) {
 
   async function resetPassword(token: string, password: string) {
     if (password.length < 10) throw new DomainError("invalid", "密码至少 10 位", [{ path: "/password", message: "至少 10 位" }]);
-    const [inv] = await db.root.select().from(invitation).where(and(eq(invitation.tokenHash, sha256Hex(token)), eq(invitation.kind, "password_reset"), isNull(invitation.usedAt), gt(invitation.expiresAt, new Date())));
+    const [inv] = await db.root
+      .select()
+      .from(invitation)
+      .where(and(eq(invitation.tokenHash, sha256Hex(token)), eq(invitation.kind, "password_reset"), isNull(invitation.usedAt), gt(invitation.expiresAt, new Date())));
     if (!inv?.targetUserId) throw new DomainError("not_found", "重置链接无效或已过期");
     const [u] = await db.root.select().from(appUser).where(eq(appUser.id, inv.targetUserId));
     if (!u?.authUserId) throw new DomainError("not_found", "用户不存在");

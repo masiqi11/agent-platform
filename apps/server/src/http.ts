@@ -9,7 +9,7 @@ export function traceIdOf(request: Request): string {
   let t = traceIds.get(request);
   if (!t) {
     const incoming = request.headers.get("x-request-id");
-    t = incoming && /^[A-Za-z0-9_\-]{6,80}$/.test(incoming) ? incoming : newId("trc");
+    t = incoming && /^[A-Za-z0-9_-]{6,80}$/.test(incoming) ? incoming : newId("trc");
     traceIds.set(request, t);
   }
   return t;

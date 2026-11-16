@@ -69,7 +69,10 @@ export function createAuth(config: Config, db: Database, hooks: AuthHooks) {
           // so the gate runs here; the DB hook below stays as defence in depth (OIDC path).
           if (!signupGrant.getStore()) {
             const mode = config.auth.signupMode;
-            const domain = String(body.email ?? "").split("@")[1]?.toLowerCase() ?? "";
+            const domain =
+              String(body.email ?? "")
+                .split("@")[1]
+                ?.toLowerCase() ?? "";
             const allowed = mode === "open" || (mode === "domain" && config.auth.allowedDomains.includes(domain));
             if (!allowed) throw new APIError("FORBIDDEN", { message: mode === "invite" ? "当前只能通过邀请链接注册" : "该邮箱域不允许自助注册，请联系管理员" });
           }

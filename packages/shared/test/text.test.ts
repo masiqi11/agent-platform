@@ -1,5 +1,19 @@
 import { describe, expect, test } from "bun:test";
-import { canonicalJson, estimateTokens, findSecrets, isSubstantive, parseAcceptanceCriteria, parseCommand, parseMentions, parseTextToolCalls, redact, similarity, toTsQuery, tokenize, extractFirstJson } from "../src";
+import {
+  canonicalJson,
+  estimateTokens,
+  findSecrets,
+  isSubstantive,
+  parseAcceptanceCriteria,
+  parseCommand,
+  parseMentions,
+  parseTextToolCalls,
+  redact,
+  similarity,
+  toTsQuery,
+  tokenize,
+  extractFirstJson,
+} from "../src";
 
 describe("tokenize", () => {
   test("CJK unigrams+bigrams and latin words", () => {

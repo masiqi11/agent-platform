@@ -1,0 +1,37 @@
+name: ci
+on:
+  pull_request:
+  push: { branches: [main] }
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: pgvector/pgvector:pg16
+        env: { POSTGRES_USER: agent, POSTGRES_PASSWORD: ci-only, POSTGRES_DB: agent_platform_test }
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd "pg_isready -U agent" --health-interval 5s --health-retries 20
+    env:
+      TEST_DATABASE_URL: postgres://agent:ci-only@127.0.0.1:5432/agent_platform_test
+      DATABASE_URL: postgres://agent:ci-only@127.0.0.1:5432/agent_platform_test
+    steps:
+      - uses: actions/checkout@v4
+      - uses: oven-sh/setup-bun@v2
+        with: { bun-version: 1.4.4 }
+      - run: bun install --frozen-lockfile
+      - run: bun run typecheck
+      - run: bun run lint
+      - run: bun run format:check
+      - name: migration drift check (generated SQL must match schema)
+        run: cd apps/server && bun x drizzle-kit generate --name drift-check | tee /tmp/drift.txt && grep -q "No schema changes" /tmp/drift.txt
+      - run: bun run test
+      - run: bun run build
+      - name: e2e (Playwright, scripted model)
+        run: cd apps/web && bun x playwright install --with-deps chromium && bun x --no-install playwright test
+  image:
+    runs-on: ubuntu-latest
+    needs: check
+    steps:
+      - uses: actions/checkout@v4
+      - run: docker build -t agent-platform:ci .

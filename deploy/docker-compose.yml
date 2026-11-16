@@ -1,0 +1,29 @@
+# Production-style stack: postgres + one-shot migrate + app (§7.3). Secrets come from deploy/.env.
+services:
+  postgres:
+    image: pgvector/pgvector:pg16
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-agent}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in deploy/.env}
+      POSTGRES_DB: ${POSTGRES_DB:-agent_platform}
+    volumes: [pgdata:/var/lib/postgresql/data]
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-agent}"]
+      interval: 5s
+      retries: 20
+  migrate:
+    build: { context: .., dockerfile: Dockerfile }
+    command: ["bun", "apps/server/src/cli/migrate.ts"]
+    env_file: .env
+    depends_on: { postgres: { condition: service_healthy } }
+  app:
+    build: { context: .., dockerfile: Dockerfile }
+    env_file: .env
+    ports: ["3000:3000"]
+    volumes: [appdata:/data]
+    depends_on:
+      migrate: { condition: service_completed_successfully }
+    restart: unless-stopped
+volumes:
+  pgdata: {}
+  appdata: {}

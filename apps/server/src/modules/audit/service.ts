@@ -47,7 +47,13 @@ export function createAuditQuery(d: { db: Database; audit: Audit; identity: Iden
   async function list(ctx: Ctx, f: AuditFilter) {
     const pid = await scope(ctx, f.projectId);
     const limit = Math.min(f.limit ?? 50, 200);
-    const rows = await d.db.root.select({ a: auditLog, actorName: principal.displayName, actorKind: principal.kind }).from(auditLog).leftJoin(principal, eq(principal.id, auditLog.actorPrincipalId)).where(where(ctx, f, pid)).orderBy(desc(auditLog.seq)).limit(limit + 1);
+    const rows = await d.db.root
+      .select({ a: auditLog, actorName: principal.displayName, actorKind: principal.kind })
+      .from(auditLog)
+      .leftJoin(principal, eq(principal.id, auditLog.actorPrincipalId))
+      .where(where(ctx, f, pid))
+      .orderBy(desc(auditLog.seq))
+      .limit(limit + 1);
     const items = rows.slice(0, limit).map(({ a, actorName, actorKind }) => ({
       id: a.id,
       seq: a.seq,
@@ -73,11 +79,16 @@ export function createAuditQuery(d: { db: Database; audit: Audit; identity: Iden
   async function exportRows(ctx: Ctx, f: AuditFilter, format: "csv" | "jsonl") {
     await d.identity.require(ctx, "audit.export", { projectId: f.projectId });
     const pid = await scope(ctx, f.projectId);
-    const rows = await d.db.root.select().from(auditLog).where(where(ctx, { ...f, cursor: undefined }, pid)).orderBy(desc(auditLog.seq)).limit(100_000);
+    const rows = await d.db.root
+      .select()
+      .from(auditLog)
+      .where(where(ctx, { ...f, cursor: undefined }, pid))
+      .orderBy(desc(auditLog.seq))
+      .limit(100_000);
     let body: string;
     if (format === "jsonl") body = rows.map((r) => JSON.stringify(r)).join("\n");
     else {
-      const esc = (v: unknown) => `"${String(typeof v === "object" && v !== null ? JSON.stringify(v) : (v ?? "")).replace(/"/g, '""')}"`;
+      const esc = (v: unknown) => `"${(v == null ? "" : typeof v === "object" ? JSON.stringify(v) : String(v as string | number | boolean)).replace(/"/g, '""')}"`;
       const cols = ["seq", "createdAt", "actorPrincipalId", "action", "resourceType", "resourceId", "outcome", "traceId", "hash"] as const;
       body = [cols.join(","), ...rows.map((r) => cols.map((c) => esc(c === "createdAt" ? r.createdAt.toISOString() : r[c])).join(","))].join("\n");
     }

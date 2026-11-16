@@ -15,7 +15,12 @@ const AuditPage = lazy(() => import("@/pages/audit").then((m) => ({ default: m.A
 
 const rootRoute = createRootRoute({ component: () => <Outlet />, notFoundComponent: () => <NotFoundState /> });
 
-const loginRoute = createRoute({ getParentRoute: () => rootRoute, path: "/login", component: LoginPage, validateSearch: (s: Record<string, unknown>): { redirect?: string } => ({ redirect: typeof s.redirect === "string" ? s.redirect : undefined }) });
+const loginRoute = createRoute({
+  getParentRoute: () => rootRoute,
+  path: "/login",
+  component: LoginPage,
+  validateSearch: (s: Record<string, unknown>): { redirect?: string } => ({ redirect: typeof s.redirect === "string" ? s.redirect : undefined }),
+});
 const setupRoute = createRoute({ getParentRoute: () => rootRoute, path: "/setup", component: SetupPage });
 const inviteRoute = createRoute({ getParentRoute: () => rootRoute, path: "/invite/$token", component: InvitePage });
 const resetRoute = createRoute({ getParentRoute: () => rootRoute, path: "/reset/$token", component: ResetPage });

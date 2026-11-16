@@ -38,10 +38,7 @@ export type Action =
   | "tenant.settings";
 
 /** Effective subject for a check. `projectRole` is undefined when not a member. */
-export type Subject =
-  | { kind: "human"; tenantRole: TenantRole; projectRole?: ProjectRole }
-  | { kind: "agent"; agentRole: AgentRole; isProjectMember: boolean }
-  | { kind: "system" };
+export type Subject = { kind: "human"; tenantRole: TenantRole; projectRole?: ProjectRole } | { kind: "agent"; agentRole: AgentRole; isProjectMember: boolean } | { kind: "system" };
 
 /** Resource context for "only own" style rules. */
 export interface PermissionContext {
@@ -153,11 +150,92 @@ function agentCan(s: Extract<Subject, { kind: "agent" }>, action: Action, ctx: P
 
 /** Default tool set per agent role (spec §22.4). Captain has no direct state-changing tools (INV-07). */
 export const AGENT_TOOL_ROLES: Record<AgentRole, readonly string[]> = {
-  captain: ["list_projects", "get_project", "ask_project_captain", "search_knowledge", "read_group_history", "search_messages", "send_message", "get_task", "propose_task", "propose_assign", "propose_transition", "update_summary", "ask_question"],
-  sub_captain: ["list_projects", "get_project", "ask_project_captain", "search_knowledge", "read_group_history", "search_messages", "send_message", "get_task", "add_task_comment", "propose_task", "propose_assign", "propose_transition", "update_summary", "ask_question"],
-  dev: ["list_projects", "get_project", "ask_project_captain", "search_knowledge", "read_group_history", "search_messages", "send_message", "get_task", "add_task_comment", "get_pipeline", "request_approval", "create_task", "update_task", "read_file", "write_file", "list_files", "search_code", "run_command", "commit", "push", "open_merge_request", "request_review", "block_task"],
-  reviewer: ["list_projects", "get_project", "search_knowledge", "read_group_history", "send_message", "get_task", "add_task_comment", "get_pipeline", "read_file", "list_files", "search_code", "get_diff", "submit_review", "create_task"],
-  tester: ["list_projects", "get_project", "search_knowledge", "read_group_history", "send_message", "get_task", "add_task_comment", "get_pipeline", "read_file", "list_files", "run_tests", "submit_test_result"],
+  captain: [
+    "list_projects",
+    "get_project",
+    "ask_project_captain",
+    "search_knowledge",
+    "read_group_history",
+    "search_messages",
+    "send_message",
+    "get_task",
+    "propose_task",
+    "propose_assign",
+    "propose_transition",
+    "update_summary",
+    "ask_question",
+  ],
+  sub_captain: [
+    "list_projects",
+    "get_project",
+    "ask_project_captain",
+    "search_knowledge",
+    "read_group_history",
+    "search_messages",
+    "send_message",
+    "get_task",
+    "add_task_comment",
+    "propose_task",
+    "propose_assign",
+    "propose_transition",
+    "update_summary",
+    "ask_question",
+  ],
+  dev: [
+    "list_projects",
+    "get_project",
+    "ask_project_captain",
+    "search_knowledge",
+    "read_group_history",
+    "search_messages",
+    "send_message",
+    "get_task",
+    "add_task_comment",
+    "get_pipeline",
+    "request_approval",
+    "create_task",
+    "update_task",
+    "read_file",
+    "write_file",
+    "list_files",
+    "search_code",
+    "run_command",
+    "commit",
+    "push",
+    "open_merge_request",
+    "request_review",
+    "block_task",
+  ],
+  reviewer: [
+    "list_projects",
+    "get_project",
+    "search_knowledge",
+    "read_group_history",
+    "send_message",
+    "get_task",
+    "add_task_comment",
+    "get_pipeline",
+    "read_file",
+    "list_files",
+    "search_code",
+    "get_diff",
+    "submit_review",
+    "create_task",
+  ],
+  tester: [
+    "list_projects",
+    "get_project",
+    "search_knowledge",
+    "read_group_history",
+    "send_message",
+    "get_task",
+    "add_task_comment",
+    "get_pipeline",
+    "read_file",
+    "list_files",
+    "run_tests",
+    "submit_test_result",
+  ],
 };
 
 /** Tools that would change task status or merge directly. Never granted to captains. */

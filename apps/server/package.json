@@ -29,7 +29,7 @@
     "zod": "4.6.7"
   },
   "devDependencies": {
-    "drizzle-kit": "1.0.0-rc.5",
-    "@types/pg": "latest"
+    "@types/pg": "latest",
+    "drizzle-kit": "1.0.0-rc.5"
   }
 }

@@ -32,7 +32,7 @@ export async function unwrap<T>(p: Promise<TreatyResult<T>>): Promise<T> {
   let r: TreatyResult<T>;
   try {
     r = await p;
-  } catch (e) {
+  } catch {
     throw new ApiError(0, "network", "网络异常，无法连接服务器");
   }
   if (r.error) {

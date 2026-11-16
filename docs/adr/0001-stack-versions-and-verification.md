@@ -5,33 +5,33 @@
 
 ## 版本（全部按文档锁定，无偏离）
 
-| 组件 | 版本 |
-| --- | --- |
-| Bun | 1.4.4 |
-| Turborepo | 2.11.11 |
-| TypeScript | 7.0.2 |
-| Elysia | 2.0.0-rc.3（@elysia/openapi 2.0.0-rc.1、@elysia/cors 2.0.0-rc.1、@elysia/static 2.0.0-rc.0） |
-| typebox | 1.4.7 |
-| drizzle-orm / drizzle-kit | 1.0.0-rc.5 |
-| Postgres | 16.16 + pgvector 0.8.7（本机真实实例） |
-| better-auth | 1.7.25 |
+| 组件                      | 版本                                                                                         |
+| ------------------------- | -------------------------------------------------------------------------------------------- |
+| Bun                       | 1.4.4                                                                                        |
+| Turborepo                 | 2.11.11                                                                                      |
+| TypeScript                | 7.0.2                                                                                        |
+| Elysia                    | 2.0.0-rc.3（@elysia/openapi 2.0.0-rc.1、@elysia/cors 2.0.0-rc.1、@elysia/static 2.0.0-rc.0） |
+| typebox                   | 1.4.7                                                                                        |
+| drizzle-orm / drizzle-kit | 1.0.0-rc.5                                                                                   |
+| Postgres                  | 16.16 + pgvector 0.8.7（本机真实实例）                                                       |
+| better-auth               | 1.7.25                                                                                       |
 
 额外引入的对等依赖：`exact-mirror`、`openapi-types`（Elysia 2 rc 的 peer，缺失时启动报错）。
 
 ## 验证结果
 
-| 编号 | 内容 | 结果 | 证据 |
-| --- | --- | --- | --- |
-| V1 | Eden treaty 端到端类型 | 待 S1 前端接入后补 | — |
-| V2 | TS 7 `tsc` 对整个 monorepo 类型检查 | ✅ 服务端 `tsc -p` 0 错误 | `bun run typecheck` |
-| V3 | drizzle ALS 事务上下文 | ✅ | `test/kernel.test.ts` |
-| V4 | better-auth 挂载到 Elysia（`/api/auth/*`，`parse: "none"`） | ✅ | `test/identity.test.ts` |
-| V5 | Elysia WebSocket | ✅ 需 `.use(websocket())`（`elysia/websocket`），否则构建路由时报错 | `test/realtime.test.ts` |
-| V6 | 子进程进程组终止 | 待 S5 | — |
-| V7 | LISTEN/NOTIFY 跨连接 | ✅ | `test/kernel.test.ts`、`test/realtime.test.ts` |
-| V8 | 连接池空闲断开不崩溃（TRAP-12） | ✅ | `test/kernel.test.ts` |
-| V9 | 手写迁移不被 `drizzle-kit generate` 覆盖 | ✅ 生成器输出 "No schema changes" | 手工验证 |
-| V10 | 原始请求体（Webhook 验签） | ✅ `parse: "none"` 可拿到原始体 | 探针 |
+| 编号 | 内容                                                        | 结果                                                                | 证据                                           |
+| ---- | ----------------------------------------------------------- | ------------------------------------------------------------------- | ---------------------------------------------- |
+| V1   | Eden treaty 端到端类型                                      | 待 S1 前端接入后补                                                  | —                                              |
+| V2   | TS 7 `tsc` 对整个 monorepo 类型检查                         | ✅ 服务端 `tsc -p` 0 错误                                           | `bun run typecheck`                            |
+| V3   | drizzle ALS 事务上下文                                      | ✅                                                                  | `test/kernel.test.ts`                          |
+| V4   | better-auth 挂载到 Elysia（`/api/auth/*`，`parse: "none"`） | ✅                                                                  | `test/identity.test.ts`                        |
+| V5   | Elysia WebSocket                                            | ✅ 需 `.use(websocket())`（`elysia/websocket`），否则构建路由时报错 | `test/realtime.test.ts`                        |
+| V6   | 子进程进程组终止                                            | 待 S5                                                               | —                                              |
+| V7   | LISTEN/NOTIFY 跨连接                                        | ✅                                                                  | `test/kernel.test.ts`、`test/realtime.test.ts` |
+| V8   | 连接池空闲断开不崩溃（TRAP-12）                             | ✅                                                                  | `test/kernel.test.ts`                          |
+| V9   | 手写迁移不被 `drizzle-kit generate` 覆盖                    | ✅ 生成器输出 "No schema changes"                                   | 手工验证                                       |
+| V10  | 原始请求体（Webhook 验签）                                  | ✅ `parse: "none"` 可拿到原始体                                     | 探针                                           |
 
 ## Elysia 2 rc 与文档示例的差异（实现时遵循的写法）
 

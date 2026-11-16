@@ -39,13 +39,17 @@ export const authSession = pgTable("auth_session", {
   updatedAt: updatedAt(),
   ipAddress: text(),
   userAgent: text(),
-  userId: text().notNull().references(() => authUser.id, { onDelete: "cascade" }),
+  userId: text()
+    .notNull()
+    .references(() => authUser.id, { onDelete: "cascade" }),
 });
 export const authAccount = pgTable("auth_account", {
   id: text().primaryKey(),
   accountId: text().notNull(),
   providerId: text().notNull(),
-  userId: text().notNull().references(() => authUser.id, { onDelete: "cascade" }),
+  userId: text()
+    .notNull()
+    .references(() => authUser.id, { onDelete: "cascade" }),
   accessToken: text(),
   refreshToken: text(),
   idToken: text(),
@@ -82,8 +86,12 @@ export const appUser = pgTable(
   "app_user",
   {
     id: text().primaryKey(),
-    tenantId: text().notNull().references(() => tenant.id),
-    authUserId: text().unique().references(() => authUser.id, { onDelete: "set null" }),
+    tenantId: text()
+      .notNull()
+      .references(() => tenant.id),
+    authUserId: text()
+      .unique()
+      .references(() => authUser.id, { onDelete: "set null" }),
     email: text().notNull(),
     name: text().notNull(),
     tenantRole: text().$type<"owner" | "admin" | "member" | "viewer" | "auditor">().notNull().default("member"),
@@ -99,7 +107,9 @@ export const principal = pgTable(
   "principal",
   {
     id: text().primaryKey(),
-    tenantId: text().notNull().references(() => tenant.id),
+    tenantId: text()
+      .notNull()
+      .references(() => tenant.id),
     kind: text().$type<"human" | "agent" | "system">().notNull(),
     refId: text(),
     displayName: text().notNull(),
@@ -110,7 +120,9 @@ export const principal = pgTable(
 
 export const invitation = pgTable("invitation", {
   id: text().primaryKey(),
-  tenantId: text().notNull().references(() => tenant.id),
+  tenantId: text()
+    .notNull()
+    .references(() => tenant.id),
   email: text(),
   tenantRole: text().notNull().default("member"),
   projectId: text(),
@@ -128,10 +140,14 @@ export const externalIdentity = pgTable(
   "external_identity",
   {
     id: text().primaryKey(),
-    tenantId: text().notNull().references(() => tenant.id),
+    tenantId: text()
+      .notNull()
+      .references(() => tenant.id),
     provider: text().notNull(),
     externalUserId: text().notNull(),
-    userId: text().notNull().references(() => appUser.id),
+    userId: text()
+      .notNull()
+      .references(() => appUser.id),
     createdAt: createdAt(),
   },
   (t) => [uniqueIndex("external_identity_uq").on(t.provider, t.externalUserId)],
@@ -153,7 +169,9 @@ export const project = pgTable(
   "project",
   {
     id: text().primaryKey(),
-    tenantId: text().notNull().references(() => tenant.id),
+    tenantId: text()
+      .notNull()
+      .references(() => tenant.id),
     key: text().notNull(),
     name: text().notNull(),
     description: text().notNull().default(""),
@@ -171,8 +189,12 @@ export const projectMember = pgTable(
   "project_member",
   {
     tenantId: text().notNull(),
-    projectId: text().notNull().references(() => project.id),
-    principalId: text().notNull().references(() => principal.id),
+    projectId: text()
+      .notNull()
+      .references(() => project.id),
+    principalId: text()
+      .notNull()
+      .references(() => principal.id),
     role: text().$type<"maintainer" | "member" | "viewer">().notNull(),
     createdAt: createdAt(),
   },
@@ -181,7 +203,9 @@ export const projectMember = pgTable(
 
 export const credential = pgTable("credential", {
   id: text().primaryKey(),
-  tenantId: text().notNull().references(() => tenant.id),
+  tenantId: text()
+    .notNull()
+    .references(() => tenant.id),
   kind: text().$type<"scm" | "im" | "llm">().notNull(),
   name: text().notNull(),
   ciphertext: text().notNull(),
@@ -197,7 +221,9 @@ export const credential = pgTable("credential", {
 export const repo = pgTable("repo", {
   id: text().primaryKey(),
   tenantId: text().notNull(),
-  projectId: text().notNull().references(() => project.id),
+  projectId: text()
+    .notNull()
+    .references(() => project.id),
   name: text().notNull(),
   provider: text().$type<"local" | "gitlab">().notNull(),
   externalId: text().notNull(),
@@ -216,7 +242,9 @@ export const repo = pgTable("repo", {
 export const module_ = pgTable("module", {
   id: text().primaryKey(),
   tenantId: text().notNull(),
-  projectId: text().notNull().references(() => project.id),
+  projectId: text()
+    .notNull()
+    .references(() => project.id),
   repoId: text(),
   name: text().notNull(),
   path: text().notNull(),
@@ -230,7 +258,9 @@ export const module_ = pgTable("module", {
 export const chatGroup = pgTable("chat_group", {
   id: text().primaryKey(),
   tenantId: text().notNull(),
-  projectId: text().notNull().references(() => project.id),
+  projectId: text()
+    .notNull()
+    .references(() => project.id),
   name: text().notNull(),
   kind: text().$type<"main" | "topic">().notNull(),
   captainAgentId: text(),
@@ -245,8 +275,12 @@ export const groupMember = pgTable(
   "group_member",
   {
     tenantId: text().notNull(),
-    groupId: text().notNull().references(() => chatGroup.id),
-    principalId: text().notNull().references(() => principal.id),
+    groupId: text()
+      .notNull()
+      .references(() => chatGroup.id),
+    principalId: text()
+      .notNull()
+      .references(() => principal.id),
     role: text().notNull().default("member"),
     notificationPref: text().notNull().default("all"),
     lastReadSeq: bigint({ mode: "number" }).notNull().default(0),
@@ -258,7 +292,9 @@ export const groupMember = pgTable(
 export const thread = pgTable("thread", {
   id: text().primaryKey(),
   tenantId: text().notNull(),
-  groupId: text().notNull().references(() => chatGroup.id),
+  groupId: text()
+    .notNull()
+    .references(() => chatGroup.id),
   title: text().notNull(),
   status: text().$type<"open" | "closed">().notNull().default("open"),
   rootMessageId: text(),
@@ -273,10 +309,14 @@ export const message = pgTable(
   {
     id: text().primaryKey(),
     tenantId: text().notNull(),
-    groupId: text().notNull().references(() => chatGroup.id),
+    groupId: text()
+      .notNull()
+      .references(() => chatGroup.id),
     threadId: text(),
     seq: bigint({ mode: "number" }).notNull(),
-    authorPrincipalId: text().notNull().references(() => principal.id),
+    authorPrincipalId: text()
+      .notNull()
+      .references(() => principal.id),
     authorLabel: text().notNull(),
     kind: text().$type<MessageKind>().notNull().default("text"),
     body: text().notNull(),
@@ -299,7 +339,9 @@ export const message = pgTable(
 export const messageVersion = pgTable(
   "message_version",
   {
-    messageId: text().notNull().references(() => message.id),
+    messageId: text()
+      .notNull()
+      .references(() => message.id),
     version: integer().notNull(),
     body: text().notNull(),
     blocks: jsonb(),
@@ -327,7 +369,9 @@ export const attachment = pgTable("attachment", {
 export const summary = pgTable("summary", {
   id: text().primaryKey(),
   tenantId: text().notNull(),
-  groupId: text().notNull().references(() => chatGroup.id),
+  groupId: text()
+    .notNull()
+    .references(() => chatGroup.id),
   fromSeq: bigint({ mode: "number" }).notNull(),
   toSeq: bigint({ mode: "number" }).notNull(),
   version: integer().notNull(),
@@ -392,7 +436,9 @@ export const task = pgTable(
   {
     id: text().primaryKey(),
     tenantId: text().notNull(),
-    projectId: text().notNull().references(() => project.id),
+    projectId: text()
+      .notNull()
+      .references(() => project.id),
     groupId: text(),
     number: integer().notNull(),
     title: text().notNull(),
@@ -425,8 +471,12 @@ export const task = pgTable(
 export const taskOwner = pgTable(
   "task_owner",
   {
-    taskId: text().notNull().references(() => task.id),
-    principalId: text().notNull().references(() => principal.id),
+    taskId: text()
+      .notNull()
+      .references(() => task.id),
+    principalId: text()
+      .notNull()
+      .references(() => principal.id),
     role: text().$type<"owner" | "reviewer">().notNull().default("owner"),
     createdAt: createdAt(),
   },
@@ -436,7 +486,9 @@ export const taskOwner = pgTable(
 export const taskComment = pgTable("task_comment", {
   id: text().primaryKey(),
   tenantId: text().notNull(),
-  taskId: text().notNull().references(() => task.id),
+  taskId: text()
+    .notNull()
+    .references(() => task.id),
   authorPrincipalId: text().notNull(),
   body: text().notNull(),
   source: text().notNull().default("web"),
@@ -481,7 +533,9 @@ export const proposal = pgTable("proposal", {
 export const approval = pgTable("approval", {
   id: text().primaryKey(),
   tenantId: text().notNull(),
-  taskId: text().notNull().references(() => task.id),
+  taskId: text()
+    .notNull()
+    .references(() => task.id),
   kind: text().$type<"merge" | "release" | "credential" | "budget">().notNull(),
   status: text().$type<"pending" | "approved" | "rejected" | "expired" | "invalidated">().notNull().default("pending"),
   headSha: text(),
@@ -499,7 +553,9 @@ export const approval = pgTable("approval", {
 export const review = pgTable("review", {
   id: text().primaryKey(),
   tenantId: text().notNull(),
-  taskId: text().notNull().references(() => task.id),
+  taskId: text()
+    .notNull()
+    .references(() => task.id),
   reviewerPrincipalId: text().notNull(),
   reviewerKind: text().$type<"agent" | "human">().notNull(),
   headSha: text().notNull(),
@@ -514,7 +570,9 @@ export const review = pgTable("review", {
 export const testRun = pgTable("test_run", {
   id: text().primaryKey(),
   tenantId: text().notNull(),
-  taskId: text().notNull().references(() => task.id),
+  taskId: text()
+    .notNull()
+    .references(() => task.id),
   testerPrincipalId: text().notNull(),
   headSha: text().notNull(),
   plan: jsonb().$type<Record<string, unknown>>().notNull(),
@@ -583,8 +641,12 @@ export const workspace = pgTable(
   {
     id: text().primaryKey(),
     tenantId: text().notNull(),
-    taskId: text().notNull().references(() => task.id),
-    repoId: text().notNull().references(() => repo.id),
+    taskId: text()
+      .notNull()
+      .references(() => task.id),
+    repoId: text()
+      .notNull()
+      .references(() => repo.id),
     branch: text().notNull(),
     baseCommit: text(),
     headCommit: text(),
@@ -693,7 +755,9 @@ export const session = pgTable("session", {
 
 export const sessionTurn = pgTable("session_turn", {
   id: text().primaryKey(),
-  sessionId: text().notNull().references(() => session.id),
+  sessionId: text()
+    .notNull()
+    .references(() => session.id),
   idx: integer().notNull(),
   role: text().notNull(),
   content: text().notNull().default(""),
@@ -734,7 +798,9 @@ export const modelProvider = pgTable("model_provider", {
 export const model = pgTable("model", {
   id: text().primaryKey(),
   tenantId: text().notNull(),
-  providerId: text().notNull().references(() => modelProvider.id),
+  providerId: text()
+    .notNull()
+    .references(() => modelProvider.id),
   name: text().notNull(),
   contextWindow: integer().notNull().default(8192),
   supportsTools: boolean().notNull().default(false),
@@ -1041,4 +1107,3 @@ export const localScmPipeline = pgTable("local_scm_pipeline", {
   createdAt: createdAt(),
   finishedAt: ts(),
 });
-

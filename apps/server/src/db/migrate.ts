@@ -8,7 +8,10 @@ export const MIGRATIONS_DIR = join(import.meta.dir, "migrations");
 
 /** Expected latest migration folder name, used by /readyz to detect version mismatch. */
 export async function expectedMigration(): Promise<string> {
-  const dirs = (await readdir(MIGRATIONS_DIR, { withFileTypes: true })).filter((d) => d.isDirectory()).map((d) => d.name).sort();
+  const dirs = (await readdir(MIGRATIONS_DIR, { withFileTypes: true }))
+    .filter((d) => d.isDirectory())
+    .map((d) => d.name)
+    .sort();
   return dirs[dirs.length - 1] ?? "";
 }
 

@@ -3,9 +3,21 @@ import { TASK_STATUSES, TRANSITIONS, checkTransition, emptyFacts, nextStatuses, 
 
 const all = (over: Partial<TaskFacts> = {}): TaskFacts => ({
   ...emptyFacts(),
-  hasTitle: true, hasAcceptanceCriteria: true, hasAssignee: true, hasHumanOwner: true, workspaceReady: true,
-  mrOpened: true, ciPassed: true, evidenceComplete: true, reviewApproved: true, testPlanExists: true,
-  testPassed: true, merged: true, issueClosed: true, mergeApproved: true, ...over,
+  hasTitle: true,
+  hasAcceptanceCriteria: true,
+  hasAssignee: true,
+  hasHumanOwner: true,
+  workspaceReady: true,
+  mrOpened: true,
+  ciPassed: true,
+  evidenceComplete: true,
+  reviewApproved: true,
+  testPlanExists: true,
+  testPassed: true,
+  merged: true,
+  issueClosed: true,
+  mergeApproved: true,
+  ...over,
 });
 const roles = (...r: TaskActorRole[]) => new Set(r);
 
@@ -22,14 +34,15 @@ describe("task state machine (FR-TSK-05)", () => {
 
   test("every unlisted pair is rejected as no_such_transition", () => {
     let rejected = 0;
-    for (const from of TASK_STATUSES) for (const to of TASK_STATUSES) {
-      const legal = TRANSITIONS.some((r) => r.to === to && (r.from === from || (r.from === "*" && from !== "done" && from !== "cancelled")));
-      if (legal) continue;
-      const r = checkTransition(from, to, roles("maintainer", "human_owner", "assignee_agent", "merge_queue", "reviewer_agent", "tester_agent"), all(), { reason: "x", needs: "y" });
-      expect(r.ok).toBe(false);
-      if (!r.ok) expect(r.code).toBe("no_such_transition");
-      rejected++;
-    }
+    for (const from of TASK_STATUSES)
+      for (const to of TASK_STATUSES) {
+        const legal = TRANSITIONS.some((r) => r.to === to && (r.from === from || (r.from === "*" && from !== "done" && from !== "cancelled")));
+        if (legal) continue;
+        const r = checkTransition(from, to, roles("maintainer", "human_owner", "assignee_agent", "merge_queue", "reviewer_agent", "tester_agent"), all(), { reason: "x", needs: "y" });
+        expect(r.ok).toBe(false);
+        if (!r.ok) expect(r.code).toBe("no_such_transition");
+        rejected++;
+      }
     expect(rejected).toBeGreaterThan(40);
   });
 

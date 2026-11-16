@@ -89,7 +89,13 @@ export function Sidebar({ collapsed, onToggle, extra }: { collapsed: boolean; on
           </Section>
         )}
       </nav>
-      <Button variant="ghost" size="sm" className={cn("mt-2 text-muted-foreground", collapsed ? "justify-center" : "justify-start")} onClick={onToggle} aria-label={collapsed ? "展开侧边栏" : "折叠侧边栏"}>
+      <Button
+        variant="ghost"
+        size="sm"
+        className={cn("mt-2 text-muted-foreground", collapsed ? "justify-center" : "justify-start")}
+        onClick={onToggle}
+        aria-label={collapsed ? "展开侧边栏" : "折叠侧边栏"}
+      >
         {collapsed ? <ChevronsRight className="size-4" /> : <ChevronsLeft className="size-4" />}
         {!collapsed && <span>折叠</span>}
       </Button>

@@ -21,7 +21,10 @@ export interface ServiceOptions {
 }
 
 export function createServices(config: Config, opts: ServiceOptions = {}) {
-  configureLogger({ level: config.logLevel, secrets: [config.auth.secret, config.jwt.secret, ...Object.values(config.masterKeys), config.llmBootstrap?.apiKey ?? "", config.dingtalk?.clientSecret ?? "", config.auth.oidc?.clientSecret ?? ""] });
+  configureLogger({
+    level: config.logLevel,
+    secrets: [config.auth.secret, config.jwt.secret, ...Object.values(config.masterKeys), config.llmBootstrap?.apiKey ?? "", config.dingtalk?.clientSecret ?? "", config.auth.oidc?.clientSecret ?? ""],
+  });
   const owner = opts.owner ?? `${process.pid}-${newId("wrk")}`;
   const db = opts.db ?? createDatabase(config.databaseUrl, config.dbPoolMax);
   const events = createEvents(db);

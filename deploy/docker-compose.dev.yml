@@ -1,0 +1,9 @@
+# Dev only: just Postgres 16 + pgvector on localhost:5432.
+services:
+  postgres:
+    image: pgvector/pgvector:pg16
+    environment: { POSTGRES_USER: agent, POSTGRES_PASSWORD: "${DEV_PG_PASSWORD:-change-me}", POSTGRES_DB: agent_platform }
+    ports: ["5432:5432"]
+    volumes: [devpg:/var/lib/postgresql/data]
+volumes:
+  devpg: {}

@@ -33,10 +33,11 @@ function client() {
   ws.onmessage = (m) => {
     const f = JSON.parse(String(m.data));
     frames.push(f);
-    for (const w of [...waiters]) if (w.pred(f)) {
-      waiters.splice(waiters.indexOf(w), 1);
-      w.res(f);
-    }
+    for (const w of waiters.slice())
+      if (w.pred(f)) {
+        waiters.splice(waiters.indexOf(w), 1);
+        w.res(f);
+      }
   };
   const closed = new Promise<number>((r) => (ws.onclose = (e) => r(e.code)));
   const open = new Promise<void>((r) => (ws.onopen = () => r()));

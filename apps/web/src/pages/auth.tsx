@@ -72,9 +72,13 @@ function FormError({ error }: { error: unknown }) {
   const fieldMsgs = Array.isArray(e?.details) ? (e!.details as Array<{ path: string; message: string }>).map((d) => `${d.path.replace(/^\//, "")}：${d.message}`) : [];
   return (
     <div role="alert" className="rounded-md border border-danger/30 bg-danger-soft px-3 py-2 text-sm">
-      <p>{e?.status === 401 ? t("login.failed") : (e?.message ?? String(error))}</p>
+      <p>{e?.status === 401 ? t("login.failed") : (e?.message ?? (error instanceof Error ? error.message : "请求失败"))}</p>
       {fieldMsgs.length > 0 && <p className="mt-1 text-xs text-muted-foreground">{fieldMsgs.slice(0, 3).join("；")}</p>}
-      {e?.traceId && e.status >= 500 ? <p className="mt-1 font-mono text-xs text-muted-foreground">{t("state.traceId")}：{e.traceId}</p> : null}
+      {e?.traceId && e.status >= 500 ? (
+        <p className="mt-1 font-mono text-xs text-muted-foreground">
+          {t("state.traceId")}：{e.traceId}
+        </p>
+      ) : null}
     </div>
   );
 }
@@ -160,7 +164,8 @@ export function LoginPage() {
 export function SetupPage() {
   const signedIn = useSignedIn();
   const m = useMutation({
-    mutationFn: (v: Record<string, string>) => unwrap(api.api.v1.setup.post({ tenantName: v.tenantName!, email: v.email!, name: v.name!, password: v.password!, timezone: Intl.DateTimeFormat().resolvedOptions().timeZone })),
+    mutationFn: (v: Record<string, string>) =>
+      unwrap(api.api.v1.setup.post({ tenantName: v.tenantName!, email: v.email!, name: v.name!, password: v.password!, timezone: Intl.DateTimeFormat().resolvedOptions().timeZone })),
     onSuccess: (r) => signedIn(r.token),
   });
   return (

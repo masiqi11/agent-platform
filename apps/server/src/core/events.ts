@@ -89,10 +89,7 @@ export function createConsumerRunner(db: Database, opts: { owner: string; maxAtt
   const busy = new Set<string>();
 
   async function ensureRow(name: string) {
-    await db.root
-      .insert(eventConsumer)
-      .values({ name, offsetSeq: 0 })
-      .onConflictDoNothing();
+    await db.root.insert(eventConsumer).values({ name, offsetSeq: 0 }).onConflictDoNothing();
   }
 
   async function acquire(name: string): Promise<number | null> {
@@ -134,11 +131,23 @@ export function createConsumerRunner(db: Database, opts: { owner: string; maxAtt
             }
           }
           if (!ok) {
-            await db.root.insert(deadLetter).values({ id: newId("dlq"), tenantId: r.tenantId, source: "event", refId: r.id, consumer: c.name, payload: { seq: r.seq, type: r.type }, error: lastErr.slice(0, 4000), attempts: attempt });
+            await db.root.insert(deadLetter).values({
+              id: newId("dlq"),
+              tenantId: r.tenantId,
+              source: "event",
+              refId: r.id,
+              consumer: c.name,
+              payload: { seq: r.seq, type: r.type },
+              error: lastErr.slice(0, 4000),
+              attempts: attempt,
+            });
           }
           processed++;
         }
-        await db.root.update(eventConsumer).set({ offsetSeq: r.seq, lastError: ok ? null : lastErr.slice(0, 500), updatedAt: new Date(), leaseUntil: new Date(Date.now() + leaseMs) }).where(eq(eventConsumer.name, c.name));
+        await db.root
+          .update(eventConsumer)
+          .set({ offsetSeq: r.seq, lastError: ok ? null : lastErr.slice(0, 500), updatedAt: new Date(), leaseUntil: new Date(Date.now() + leaseMs) })
+          .where(eq(eventConsumer.name, c.name));
       }
       return prev > offset ? Math.max(processed, 1) : 0;
     } finally {

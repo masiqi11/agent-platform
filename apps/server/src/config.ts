@@ -48,7 +48,10 @@ export function createConfig(env: Env, cwd = process.cwd()): Config {
     host: env.HOST,
     port: env.PORT,
     publicUrl: env.PUBLIC_URL,
-    trustedOrigins: (env.TRUSTED_ORIGINS ?? env.PUBLIC_URL).split(",").map((s) => s.trim()).filter(Boolean),
+    trustedOrigins: (env.TRUSTED_ORIGINS ?? env.PUBLIC_URL)
+      .split(",")
+      .map((s) => s.trim())
+      .filter(Boolean),
     databaseUrl: env.DATABASE_URL,
     dbPoolMax: env.DB_POOL_MAX,
     dirs: {
@@ -64,14 +67,20 @@ export function createConfig(env: Env, cwd = process.cwd()): Config {
       secret: env.BETTER_AUTH_SECRET,
       url: env.BETTER_AUTH_URL ?? env.PUBLIC_URL,
       signupMode: env.AUTH_SIGNUP_MODE ?? (isProd ? "invite" : "open"),
-      allowedDomains: (env.AUTH_ALLOWED_EMAIL_DOMAINS ?? "").split(",").map((s) => s.trim().toLowerCase()).filter(Boolean),
+      allowedDomains: (env.AUTH_ALLOWED_EMAIL_DOMAINS ?? "")
+        .split(",")
+        .map((s) => s.trim().toLowerCase())
+        .filter(Boolean),
       devLogin: isProd ? false : (env.AUTH_DEV_LOGIN ?? true),
       oidc: env.OIDC_ISSUER && env.OIDC_CLIENT_ID && env.OIDC_CLIENT_SECRET ? { issuer: env.OIDC_ISSUER, clientId: env.OIDC_CLIENT_ID, clientSecret: env.OIDC_CLIENT_SECRET } : null,
     },
     jwt: { secret: env.JWT_SECRET, previous: env.JWT_SECRET_PREVIOUS, ttlSec: env.AGENT_TOKEN_TTL_SEC },
     masterKeys,
     currentKeyVersion: env.MASTER_KEY_V2 ? 2 : 1,
-    s3: env.S3_ENDPOINT && env.S3_BUCKET && env.S3_ACCESS_KEY && env.S3_SECRET_KEY ? { endpoint: env.S3_ENDPOINT, region: env.S3_REGION ?? "us-east-1", bucket: env.S3_BUCKET, accessKey: env.S3_ACCESS_KEY, secretKey: env.S3_SECRET_KEY } : null,
+    s3:
+      env.S3_ENDPOINT && env.S3_BUCKET && env.S3_ACCESS_KEY && env.S3_SECRET_KEY
+        ? { endpoint: env.S3_ENDPOINT, region: env.S3_REGION ?? "us-east-1", bucket: env.S3_BUCKET, accessKey: env.S3_ACCESS_KEY, secretKey: env.S3_SECRET_KEY }
+        : null,
     maxUploadMb: env.MAX_UPLOAD_MB,
     sandbox: { kind: env.SANDBOX ?? (isProd ? "docker" : "process"), image: env.SANDBOX_IMAGE, runtime: env.SANDBOX_RUNTIME, timeoutMs: env.SANDBOX_TIMEOUT_MS },
     llmBootstrap: env.LLM_BASE_URL && env.LLM_MODEL ? { baseUrl: env.LLM_BASE_URL, apiKey: env.LLM_API_KEY, model: env.LLM_MODEL, embeddingModel: env.LLM_EMBEDDING_MODEL } : null,

@@ -19,7 +19,15 @@ const p = Bun.spawn(["bun", "src/main.ts"], {
   cwd: ".",
   stdout: "inherit",
   stderr: "inherit",
-  env: { ...process.env, DATABASE_URL: u.toString(), PORT: port, PUBLIC_URL: `http://127.0.0.1:${port}`, LOG_LEVEL: "warn", AUTH_SIGNUP_MODE: "invite", ...(process.env.E2E_EXTRA ? JSON.parse(process.env.E2E_EXTRA) : {}) },
+  env: {
+    ...process.env,
+    DATABASE_URL: u.toString(),
+    PORT: port,
+    PUBLIC_URL: `http://127.0.0.1:${port}`,
+    LOG_LEVEL: "warn",
+    AUTH_SIGNUP_MODE: "invite",
+    ...(process.env.E2E_EXTRA ? JSON.parse(process.env.E2E_EXTRA) : {}),
+  },
 });
 process.on("SIGTERM", () => p.kill());
 process.on("SIGINT", () => p.kill());
