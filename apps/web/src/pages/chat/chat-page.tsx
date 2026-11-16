@@ -20,6 +20,8 @@ import { cn } from "@/lib/utils";
 import { Composer, type MemberLite } from "./composer";
 import { MessageItem, type MessageActions } from "./message-item";
 import { CreateTaskDialog } from "@/components/task-bits";
+import { StreamingBubble } from "@/components/captain-cards";
+import { invalidateCaptain, useStreams } from "@/lib/captain";
 import { DecisionsTab, SummaryTab, TasksTab } from "./right-panel";
 import { catchUp, loadInitial, loadOlder, patch, refreshOne, upsertConfirmed, type Msg, type TimelineState } from "./timeline-store";
 
@@ -123,7 +125,9 @@ export function ChatPage({ projectId, groupId: gParam, seq, threadId }: { projec
           <EmptyState icon={MessagesSquare} title="群不存在或无权访问" body="从左侧选择一个群开始对话。" />
         </div>
       )}
-      {groupId && group && <RightColumn key={threadId ?? "main"} groupId={groupId} threadId={threadId} projectId={projectId} />}
+      {groupId && group && (
+        <RightColumn key={threadId ?? "main"} groupId={groupId} threadId={threadId} projectId={projectId} canDecide={Boolean(p && p.myRole !== "viewer" && p.status !== "archived")} />
+      )}
     </div>
   );
 }
@@ -357,6 +361,8 @@ function ConversationColumn({
   const meId = me?.principalId ?? "";
   const members = useGroupMembers(groupId);
   const timeline = useQuery({ queryKey: qk.timeline(groupId), queryFn: () => loadInitial(groupId, seq), staleTime: Infinity, gcTime: 5 * 60_000 });
+  const streams = useStreams(groupId);
+  const captainName = (members.data ?? []).find((m) => m.agentRole === "sub_captain" || m.agentRole === "captain")?.name ?? "船长";
   const [replyTo, setReplyTo] = useState<Msg | null>(null);
   const [editing, setEditing] = useState<Msg | null>(null);
   const [deleting, setDeleting] = useState<Msg | null>(null);
@@ -430,6 +436,7 @@ function ConversationColumn({
       if (f.type === "resync") return void catchUp(groupId);
       if (f.type !== "event") return;
       const p = f.event.payload as { seq?: number };
+      invalidateCaptain(f.event.type, f.event.payload);
       if (f.event.type === "message.created") void catchUp(groupId);
       else if ((f.event.type === "message.updated" || f.event.type === "message.deleted") && typeof p.seq === "number") void refreshOne(groupId, p.seq);
       else if (f.event.type === "thread.created") void queryClient.invalidateQueries({ queryKey: qk.threads(groupId) });
@@ -625,6 +632,11 @@ function ConversationColumn({
                 );
               })}
             </div>
+            {Object.entries(streams)
+              .filter(([id]) => !items.some((m) => m.id === id))
+              .map(([id, text]) => (
+                <StreamingBubble key={id} name={captainName} text={text} />
+              ))}
             <div className="h-3" />
           </>
         )}
@@ -776,7 +788,7 @@ function ThreadDialog({ m, onClose, groupId, onCreated }: { m: Msg | null; onClo
   );
 }
 
-function RightColumn({ groupId, threadId, projectId }: { groupId: string; threadId?: string; projectId: string }) {
+function RightColumn({ groupId, threadId, projectId, canDecide }: { groupId: string; threadId?: string; projectId: string; canDecide: boolean }) {
   const members = useGroupMembers(groupId);
   const navigate = useNavigate();
   const [tab, setTab] = useState(threadId ? "thread" : "summary");
@@ -799,7 +811,7 @@ function RightColumn({ groupId, threadId, projectId }: { groupId: string; thread
             {threadId && <ThreadPanel groupId={groupId} threadId={threadId} onClose={() => void navigate({ to: "/projects/$projectId/chat", params: { projectId }, search: { g: groupId } })} />}
           </TabsContent>
           <TabsContent value="decisions">
-            <DecisionsTab groupId={groupId} />
+            <DecisionsTab projectId={projectId} groupId={groupId} canDecide={canDecide} />
           </TabsContent>
           <TabsContent value="tasks">
             <TasksTab projectId={projectId} groupId={groupId} />

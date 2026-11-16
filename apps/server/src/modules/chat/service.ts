@@ -45,6 +45,8 @@ export interface SendInput {
   wakeDepth?: number;
   source?: string;
   externalId?: string;
+  /** Pre-allocated id, so a streamed reply bubble (LLM-12) becomes the final message. */
+  id?: string;
 }
 
 /** Groups, members, threads and the timeline (FR-GRP-01…10). */
@@ -121,7 +123,7 @@ export function createChat(d: ChatDeps) {
         .where(and(eq(thread.id, input.threadId), eq(thread.groupId, g.id)));
       if (!t) throw invalid("线程不存在", [{ path: "/threadId", message: "不存在" }]);
     }
-    const id = newId("msg");
+    const id = input.id ?? newId("msg");
     const row = await db.tx(async (q) => {
       // External sources: idempotent on (source, external_id) (INV-06 groundwork).
       if (input.externalId) {

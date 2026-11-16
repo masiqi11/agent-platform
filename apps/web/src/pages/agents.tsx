@@ -12,6 +12,8 @@ import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Textarea } from "@/components/ui/textarea";
 import { api, unwrap } from "@/lib/api";
+import { useModels } from "@/lib/captain";
+import { useMe } from "@/lib/me";
 import { AGENT_ROLE_LABEL, useAgents, useProject, type Agent } from "@/lib/projects";
 import { qk, queryClient } from "@/lib/query";
 
@@ -132,12 +134,21 @@ function AgentDialog({ projectId, agent, onClose, onSaved }: { projectId: string
   const [role, setRole] = useState<"dev" | "reviewer" | "tester">("dev");
   const [instructions, setInstructions] = useState(existing?.instructions ?? "");
   const [model, setModel] = useState(typeof existing?.modelPolicy.primary === "string" ? existing.modelPolicy.primary : "");
+  const [fallback, setFallback] = useState(typeof existing?.modelPolicy.fallback === "string" ? existing.modelPolicy.fallback : "");
   const [conc, setConc] = useState(existing?.maxConcurrency ?? 1);
   const [busy, setBusy] = useState(false);
+  const { data: me } = useMe();
+  const models = useModels(me?.tenantRole === "owner" || me?.tenantRole === "admin");
+  const modelNames = (models.data?.providers ?? []).flatMap((p) => p.models.map((m) => m.name));
   async function save() {
     setBusy(true);
     try {
-      const common = { name: name.trim(), instructions, maxConcurrency: conc, ...(model.trim() ? { modelPolicy: { primary: model.trim() } } : {}) };
+      const common = {
+        name: name.trim(),
+        instructions,
+        maxConcurrency: conc,
+        modelPolicy: { ...(model.trim() ? { primary: model.trim() } : {}), ...(fallback.trim() ? { fallback: fallback.trim() } : {}) },
+      };
       if (isNew) await unwrap(api.api.v1.projects({ id: projectId }).agents.post({ ...common, role }));
       else if (agent) await unwrap(api.api.v1.agents({ id: agent.id }).patch(common));
       toast.success(isNew ? "Agent 已创建" : "已保存，新配置对之后的运行生效");
@@ -180,10 +191,19 @@ function AgentDialog({ projectId, agent, onClose, onSaved }: { projectId: string
             <Label htmlFor="agent-ins">附加指令</Label>
             <Textarea id="agent-ins" value={instructions} onChange={(e) => setInstructions(e.target.value)} rows={4} placeholder="补充到角色默认指令之后，例如代码风格约定。" />
           </div>
+          <div className="grid gap-1.5">
+            <Label htmlFor="agent-fallback">备用模型（主模型失败或熔断时使用）</Label>
+            <Input id="agent-fallback" list="model-options" value={fallback} onChange={(e) => setFallback(e.target.value)} placeholder="可留空" className="font-mono" />
+          </div>
           <div className="grid grid-cols-[1fr_120px] gap-3">
             <div className="grid gap-1.5">
               <Label htmlFor="agent-model">模型（留空用租户默认）</Label>
-              <Input id="agent-model" value={model} onChange={(e) => setModel(e.target.value)} placeholder="ollama/gemma4:e2b" className="font-mono" />
+              <Input id="agent-model" list="model-options" value={model} onChange={(e) => setModel(e.target.value)} placeholder={models.data?.defaultModel ?? "gemma4:e2b"} className="font-mono" />
+              <datalist id="model-options">
+                {modelNames.map((n) => (
+                  <option key={n} value={n} />
+                ))}
+              </datalist>
             </div>
             <div className="grid gap-1.5">
               <Label htmlFor="agent-conc">并发上限</Label>

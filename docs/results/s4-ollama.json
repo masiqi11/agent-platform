@@ -1,0 +1,68 @@
+{
+  "ranAt": "2026-11-16T12:25:18.152Z",
+  "host": "本机 CPU（8 核，无 GPU）",
+  "steps": [
+    {
+      "step": "1 @船长 支付服务最近超时，帮我查一下 → 回复 + 追问",
+      "ms": 18256,
+      "pass": true,
+      "by": "fallback",
+      "detail": "回复=\"收到，王负责人提到支付服务最近超时，需要我帮忙查询。\\n\\n请问您希望我从哪些方面着手排查？例如：是想查看最近的超时日志、检查支付服务的依赖项、还是查看相关的工单记\"；追问卡=\"请问您希望我从哪些方面着手排查？\""
+    },
+    {
+      "step": "2 补充细节 → 提议卡",
+      "ms": 13814,
+      "pass": true,
+      "by": "model",
+      "detail": "标题=\"排查支付服务 /pay/callback 接口超时和高错误率问题\"；验收标准 4 条；优先级 P1"
+    },
+    {
+      "step": "3 确认提议 → 建任务并按策略分配",
+      "ms": 47,
+      "pass": true,
+      "by": "n/a",
+      "detail": "任务 P1 状态=backlog 负责=已发分配提议"
+    },
+    {
+      "step": "4 滚动摘要（/summary）",
+      "ms": 19497,
+      "pass": true,
+      "by": "model",
+      "detail": "v1 条目 2；决策 1；模型=gemma4:e2b"
+    },
+    {
+      "step": "5 问全局船长（相关）",
+      "ms": 2660,
+      "pass": true,
+      "by": "model",
+      "detail": "\"排查支付服务 /pay/callback 接口超时和高错误率问题。\" 来源=PAY"
+    },
+    {
+      "step": "6 问全局船长（无依据）→ 未检索到依据",
+      "ms": 8,
+      "pass": true,
+      "by": "n/a",
+      "detail": "未检索到依据"
+    }
+  ],
+  "stat": {
+    "model": "gemma4:e2b",
+    "think": false,
+    "calls": 5,
+    "ok": 5,
+    "errors": 0,
+    "avgLatencyMs": 10780,
+    "tokensPerSec": 8.4,
+    "toolModes": {
+      "none": 4,
+      "native": 1
+    },
+    "repaired": 1,
+    "byPurpose": {
+      "captain.turn": [18129, 13718],
+      "captain.summary.repair": [9015],
+      "captain.summary": [10392],
+      "global.ask": [2645]
+    }
+  }
+}

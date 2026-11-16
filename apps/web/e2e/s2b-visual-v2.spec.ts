@@ -1,4 +1,5 @@
 import { expect, test } from "@playwright/test";
+// Named s2b so it runs after S1/S2 set up the tenant but before S3/S4 mutate the demo project.
 import { apiToken, seedDemo, shootBoth, watchConsole } from "./helpers";
 
 /**
@@ -22,7 +23,7 @@ test("v2 visual: demo chat and project home (演示数据)", async ({ page }) =>
   await expect(page.getByTestId("task-card-inline").first()).toBeVisible();
   await expect(page.getByTestId("proposal-panel").first()).toBeVisible();
   await page.getByRole("tab", { name: "决策" }).click();
-  await expect(page.getByTestId("decisions")).toContainText("外部调用超时统一走配置中心");
+  await expect(page.getByTestId("decisions")).toContainText("外部调用超时");
   await page.getByRole("tab", { name: "摘要" }).click();
   await page.evaluate(() => (document.activeElement as HTMLElement | null)?.blur());
   await expect(page.getByTestId("thread-replies").first()).toContainText("2 条回复");

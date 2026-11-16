@@ -84,7 +84,8 @@ test("S3: board snap-back with missing guards → assign → ready; proposal acc
 
   // Board after the flow.
   await page.goto(`/projects/${demo.id}/board`);
-  await expect(page.getByTestId("col-ready").getByTestId("task-card")).toHaveCount(2);
+  // S4: the accepted proposal is auto-assigned by the captain's policy (P2 ∈ autoAssignPriorities) → ready too.
+  await expect(page.getByTestId("col-ready").getByTestId("task-card")).toHaveCount(3);
   await blur(page);
   await shootBoth(page, "s3-board");
   con.assertClean();

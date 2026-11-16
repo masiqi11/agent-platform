@@ -7,6 +7,7 @@ import type { Ctx } from "../../core/context";
 import { DomainError, conflict, forbidden, invalid, notFound } from "../../core/errors";
 import type { Events } from "../../core/events";
 import { newId } from "../../core/ids";
+import { log } from "../../core/logger";
 import type { Chat } from "../chat/service";
 import type { Identity } from "../identity/service";
 import type { Inbox } from "../inbox/service";
@@ -64,8 +65,11 @@ export function similarity(a: string, b: string) {
  * accept/reject; acceptance executes through the normal services (tasks.create / transition),
  * so every policy and audit still applies (INV-07).
  */
+type ProposalRow = typeof proposal.$inferSelect;
+
 export function createProposals(d: ProposalDeps) {
   const { db } = d;
+  const hooks: { afterAccept?: (ctx: Ctx, p: ProposalRow, taskIds: string[]) => Promise<void> } = {};
 
   async function load(ctx: Ctx, id: string) {
     const [p] = await db.root
@@ -323,6 +327,8 @@ export function createProposals(d: ProposalDeps) {
       return r;
     });
     await syncCard(ctx, u!);
+    // Post-accept policy (captain assignment, CAP-补7) — late-bound to avoid a module cycle.
+    if (hooks.afterAccept) await hooks.afterAccept(ctx, u!, resultTaskIds).catch((e: Error) => log.warn("proposal.after_accept_failed", { err: e.message, stack: e.stack?.slice(0, 600) }));
     return (await present([u!]))[0]!;
   }
 
@@ -391,7 +397,7 @@ export function createProposals(d: ProposalDeps) {
     return { expired: due.length, reminded: remind.length };
   }
 
-  return { create, list, get, edit, accept, reject, sweep };
+  return { create, list, get, edit, accept, reject, sweep, hooks };
 }
 
 export type Proposals = ReturnType<typeof createProposals>;

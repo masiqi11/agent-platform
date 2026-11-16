@@ -4,7 +4,7 @@
  *   DATABASE_URL=... SEED_PASSWORD=... bun src/cli/seed-demo.ts [--owner owner@xinghe.test]
  *
  * Drives the public HTTP API in-process (same validation/permissions as the web app); only the
- * decision card — whose API arrives with the captain in S4 — is written through services. Every
+ * decision card and the captain summary are written through services / the DB directly. Every
  * artifact is labelled 「演示」. Idempotent per project key DEMO: re-running is a no-op.
  */
 import { and, eq } from "drizzle-orm";
@@ -13,7 +13,7 @@ import { signupGrant } from "../auth";
 import { createConfig } from "../config";
 import type { Ctx } from "../core/context";
 import { newId } from "../core/ids";
-import { agent, appUser, decision, tenant } from "../db/schema";
+import { agent, appUser, decision, summary, tenant } from "../db/schema";
 import { loadEnv } from "../env";
 import { createServices } from "../services";
 
@@ -83,16 +83,16 @@ async function main() {
 
   await say("王晓明", "【演示数据】以下对话为演示样例，用于展示界面效果。");
   const m1 = await say("张越", "退款回调最近也偶发 502，看日志是 billing 网关在 18:00 左右限流。");
-  await say("王岚", "先记下来，等超时修复上线后再排查；限流阈值需要和 BILL 组确认。");
+  const m2 = await say("王岚", "先记下来，等超时修复上线后再排查；限流阈值需要和 BILL 组确认。");
   const m3 = await say("林舟", "决定：1.5 版本统一把外部调用超时放进配置中心，不再写死在代码里。");
   await say("张越", "我先拉一下 18:00–18:30 的网关日志，晚点贴到线程里。");
-  await say("王晓明", "好的。退款回调 502 这个我建一个任务跟进，@张越 你来当 owner？");
+  const m6 = await say("王晓明", "好的。退款回调 502 这个我建一个任务跟进，@张越 你来当 owner？");
   await say("张越", "可以，验收标准我补两条：**伪造签名返回 401**，重试最多 5 次。");
 
   // A thread with replies.
   const th = await req("POST", `/api/v1/groups/${g}/threads`, tokens["张越"], { title: "退款回调 502 排查", rootMessageId: m1.id });
   await say("张越", "18:02–18:07 有 37 次 502，全部来自 /refund/notify。", { threadId: th.id });
-  await say("王岚", "和 BILL 组确认了：限流阈值 200 QPS，峰值时我们到了 240。", { threadId: th.id });
+  const r2 = await say("王岚", "和 BILL 组确认了：限流阈值 200 QPS，峰值时我们到了 240。", { threadId: th.id });
 
   // A task card (task created from a message in this group).
   const t1 = await req(
@@ -143,6 +143,25 @@ async function main() {
     source: "system",
     body: "外部调用超时统一走配置中心\n\n1.5 版本统一把外部调用超时放进配置中心，不再写死在代码里。（林舟 已确认 · 演示数据）",
     blocks: { decisionId: did, title: "外部调用超时统一走配置中心", status: "confirmed", sourceSeq: m3.seq },
+  });
+
+  // The captain's rolling summary (v1), citing messages by seq — labelled as demo data.
+  await s.db.root.insert(summary).values({
+    id: newId("sum"),
+    tenantId,
+    groupId: g,
+    fromSeq: 1,
+    toSeq: r2.seq,
+    version: 1,
+    promptVersion: "demo",
+    model: "演示数据",
+    content: {
+      decisions: [{ text: "1.5 版本外部调用超时统一走配置中心", seqs: [m3.seq], decisionId: did }],
+      constraints: [{ text: "限流阈值调整需先和 BILL 组确认", seqs: [m2.seq] }],
+      openQuestions: [{ text: "退款回调 502 任务由谁当 owner？（张越已认领）", seqs: [m6.seq] }],
+      taskGraph: [{ text: "排查退款回调偶发 502，验收含伪造签名 401", seqs: [m1.seq, m6.seq] }],
+      risks: [{ text: "峰值 240 QPS 超过 BILL 限流 200 QPS，18:00 前后易 502", seqs: [r2.seq] }],
+    },
   });
 
   // A pending proposal from the project captain (captain proposes; humans decide — INV-07).

@@ -1,12 +1,19 @@
-import { useQuery } from "@tanstack/react-query";
+import { useMutation } from "@tanstack/react-query";
 import { Link } from "@tanstack/react-router";
-import { Landmark, Sparkles } from "lucide-react";
-import type { ReactNode } from "react";
+import { Landmark, PencilLine, RefreshCw, Sparkles } from "lucide-react";
+import { useState, type ReactNode } from "react";
+import { toast } from "sonner";
 import { PageSkeleton } from "@/components/states";
-import { qk } from "@/lib/query";
+import { Button } from "@/components/ui/button";
+import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
+import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
+import { Textarea } from "@/components/ui/textarea";
+import { api, unwrap } from "@/lib/api";
+import { decide, SUMMARY_SECTIONS, useDecisions, useSummary, type SummaryContent } from "@/lib/captain";
+import { relativeTime } from "@/lib/i18n";
 import { COLUMNS, useTasks } from "@/lib/tasks";
 import { cn } from "@/lib/utils";
-import type { TimelineState } from "./timeline-store";
 
 /** Right-panel section: coloured dot + small heading + count; empty state stays quiet but present. */
 export function PanelSection({ dot, title, count, empty, children }: { dot: string; title: string; count?: number; empty?: string; children?: ReactNode }) {
@@ -23,61 +30,138 @@ export function PanelSection({ dot, title, count, empty, children }: { dot: stri
   );
 }
 
-/** Decision cards already in the loaded timeline (the decisions API arrives with the captain, S4). */
-function useGroupDecisions(groupId: string) {
-  const tl = useQuery<TimelineState>({ queryKey: qk.timeline(groupId), enabled: false });
-  return (tl.data?.items ?? [])
-    .filter((m) => m.kind === "decision_card" && !m.deleted)
-    .map((m) => ({
-      id: m.id,
-      seq: m.seq,
-      title: typeof m.blocks?.title === "string" ? m.blocks.title : m.body.split("\n")[0]!,
-      body: m.body.split("\n").slice(1).join(" ").trim(),
-      status: typeof m.blocks?.status === "string" ? m.blocks.status : "proposed",
-    }));
+function SeqLink({ projectId, groupId, seq }: { projectId: string; groupId: string; seq: number }) {
+  return (
+    <Link to="/projects/$projectId/chat" params={{ projectId }} search={{ g: groupId, seq }} className="font-mono text-[11px] text-muted-foreground hover:text-primary hover:underline">
+      #{seq}
+    </Link>
+  );
 }
 
+/** Rolling summary maintained by the project captain (CAP-补3/5): sections cite messages by seq. */
 export function SummaryTab({ projectId, groupId }: { projectId: string; groupId: string }) {
-  const decisions = useGroupDecisions(groupId);
-  const tasks = useTasks(projectId, { groupId });
-  const risks = (tasks.data ?? []).filter((t) => t.status === "blocked" || t.priority === "P0");
+  const q = useSummary(groupId);
+  const [editing, setEditing] = useState(false);
+  const refresh = useMutation({
+    mutationFn: () => unwrap(api.api.v1.groups({ id: groupId }).summary.refresh.post()),
+    onSuccess: () => toast.success("已请船长刷新摘要"),
+    onError: (e) => toast.error(e.message),
+  });
+  if (q.isPending) return <PageSkeleton rows={4} />;
+  const s = q.data?.summary ?? null;
   return (
-    <div>
+    <div data-testid="summary-tab">
       <div className="mb-1 flex items-center gap-2 rounded-lg bg-muted/60 px-3 py-2 text-xs text-muted-foreground">
         <Sparkles className="size-3.5 shrink-0 text-agent" />
-        <span>本群摘要由项目船长维护（S4 接入）；下面先汇总群内已有的决策与风险。</span>
+        {s ? (
+          <span className="min-w-0 flex-1">
+            第 {s.version} 版 · 覆盖到 #{s.toSeq} · {relativeTime(s.createdAt)}
+            {s.corrected ? " · 人工修正" : s.model.includes("heuristic") ? " · 规则兜底" : ""}
+          </span>
+        ) : (
+          <span className="min-w-0 flex-1">船长还没有生成摘要；讨论多起来后会自动生成，也可以现在生成。</span>
+        )}
+        <Button variant="ghost" size="icon" className="size-6" aria-label="刷新摘要" title="刷新摘要" disabled={refresh.isPending} onClick={() => refresh.mutate()}>
+          <RefreshCw className={cn("size-3.5", refresh.isPending && "animate-spin")} />
+        </Button>
+        {s && (
+          <Button variant="ghost" size="icon" className="size-6" aria-label="修正摘要" title="修正摘要" onClick={() => setEditing(true)}>
+            <PencilLine className="size-3.5" />
+          </Button>
+        )}
       </div>
       <div className="divide-y">
-        <PanelSection dot="bg-ok" title="决策" count={decisions.length} empty="还没有确认的决策">
-          <ul className="space-y-1.5">
-            {decisions.map((d) => (
-              <li key={d.id}>
-                {d.title} <span className="font-mono text-[11px] text-muted-foreground">#{d.seq}</span>
-              </li>
-            ))}
-          </ul>
-        </PanelSection>
-        <PanelSection dot="bg-attention" title="未决问题" count={0} empty="船长会从讨论里提炼待回答的问题" />
-        <PanelSection dot="bg-info" title="约束" count={0} />
-        <PanelSection dot="bg-danger" title="风险与线索" count={risks.length} empty="没有阻塞或 P0 任务">
-          <ul className="space-y-1.5">
-            {risks.map((t) => (
-              <li key={t.id}>
-                <Link to="/projects/$projectId/tasks/$taskId" params={{ projectId, taskId: t.id }} className="hover:underline">
-                  {t.title}
-                </Link>{" "}
-                <span className="font-mono text-[11px] text-muted-foreground">{t.ref}</span>
-              </li>
-            ))}
-          </ul>
-        </PanelSection>
+        {SUMMARY_SECTIONS.map((sec) => {
+          const items = s?.content[sec.key] ?? [];
+          return (
+            <PanelSection key={sec.key} dot={sec.dot} title={sec.label} count={items.length} empty={sec.empty}>
+              <ul className="space-y-1.5">
+                {items.map((it, i) => (
+                  <li key={i}>
+                    {it.text}{" "}
+                    {it.seqs.slice(0, 3).map((n) => (
+                      <SeqLink key={n} projectId={projectId} groupId={groupId} seq={n} />
+                    ))}
+                  </li>
+                ))}
+              </ul>
+            </PanelSection>
+          );
+        })}
       </div>
+      {s && <CorrectSummaryDialog open={editing} onOpenChange={setEditing} groupId={groupId} content={s.content} />}
     </div>
   );
 }
 
-export function DecisionsTab({ groupId }: { groupId: string }) {
-  const decisions = useGroupDecisions(groupId);
+/** Human correction → a new summary version (the old one is kept, CAP-补5). One line per item. */
+function CorrectSummaryDialog({ open, onOpenChange, groupId, content }: { open: boolean; onOpenChange(v: boolean): void; groupId: string; content: SummaryContent }) {
+  const toText = (k: keyof SummaryContent) => content[k].map((x) => `${x.text}${x.seqs.length ? ` #${x.seqs.join(" #")}` : ""}`).join("\n");
+  const [draft, setDraft] = useState(() => Object.fromEntries(SUMMARY_SECTIONS.map((s) => [s.key, toText(s.key)])) as Record<keyof SummaryContent, string>);
+  const [note, setNote] = useState("");
+  const m = useMutation({
+    mutationFn: () => {
+      const parse = (txt: string) =>
+        txt
+          .split("\n")
+          .map((l) => l.trim())
+          .filter(Boolean)
+          .map((l) => ({ text: l.replace(/\s*#\d+/g, "").trim() || l, seqs: [...l.matchAll(/#(\d+)/g)].map((x) => Number(x[1])) }));
+      const c = Object.fromEntries(SUMMARY_SECTIONS.map((s) => [s.key, parse(draft[s.key])])) as unknown as SummaryContent;
+      return unwrap(api.api.v1.groups({ id: groupId }).summary.corrections.post({ content: c, note }));
+    },
+    onSuccess: () => {
+      toast.success("已保存为新版本");
+      onOpenChange(false);
+    },
+    onError: (e) => toast.error(e.message),
+  });
+  return (
+    <Dialog open={open} onOpenChange={onOpenChange}>
+      <DialogContent className="max-w-xl">
+        <DialogHeader>
+          <DialogTitle>修正摘要</DialogTitle>
+          <DialogDescription>每行一条，末尾用 #序号 标注来源。保存后生成新版本，旧版本保留可追溯。</DialogDescription>
+        </DialogHeader>
+        <div className="max-h-[55vh] space-y-3 overflow-y-auto pr-1">
+          {SUMMARY_SECTIONS.map((s) => (
+            <div key={s.key} className="space-y-1">
+              <Label className="flex items-center gap-2 text-xs">
+                <span className={cn("size-1.5 rounded-full", s.dot)} /> {s.label}
+              </Label>
+              <Textarea rows={2} value={draft[s.key]} onChange={(e) => setDraft((d) => ({ ...d, [s.key]: e.target.value }))} />
+            </div>
+          ))}
+          <div className="space-y-1">
+            <Label className="text-xs">修正说明</Label>
+            <Input value={note} onChange={(e) => setNote(e.target.value)} placeholder="例如：补充遗漏的风险" />
+          </div>
+        </div>
+        <DialogFooter>
+          <Button onClick={() => m.mutate()} disabled={m.isPending}>
+            保存新版本
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
+const DECISION_STATUS: Record<string, { label: string; cls: string }> = {
+  proposed: { label: "待确认", cls: "bg-attention-soft" },
+  confirmed: { label: "已确认", cls: "bg-ok-soft text-ok" },
+  rejected: { label: "已驳回", cls: "bg-idle-soft text-muted-foreground" },
+  revoked: { label: "已撤销", cls: "bg-idle-soft text-muted-foreground" },
+};
+
+export function DecisionsTab({ projectId, groupId, canDecide }: { projectId: string; groupId: string; canDecide: boolean }) {
+  const q = useDecisions(groupId);
+  const act = useMutation({
+    mutationFn: (v: { id: string; action: "confirm" | "reject" | "revoke"; reason?: string }) => decide(v.id, v.action, v.reason),
+    onError: (e) => toast.error(e.message),
+  });
+  if (q.isPending) return <PageSkeleton rows={3} />;
+  const decisions = q.data ?? [];
   if (decisions.length === 0)
     return (
       <div className="flex flex-col items-center px-4 py-10 text-center">
@@ -85,21 +169,39 @@ export function DecisionsTab({ groupId }: { groupId: string }) {
           <Landmark className="size-5" />
         </span>
         <p className="text-sm font-medium">暂无决策</p>
-        <p className="mt-1 text-xs text-muted-foreground">被确认的决策会沉淀在这里，并同步到知识库。</p>
+        <p className="mt-1 text-xs text-muted-foreground">船长会从讨论里提炼决策，确认后沉淀在这里。</p>
       </div>
     );
   return (
     <ul className="space-y-2.5 pt-1" data-testid="decisions">
       {decisions.map((d) => (
         <li key={d.id} className="rounded-xl border bg-card p-3.5">
-          <p className="flex items-center gap-2 text-sm font-medium">
-            <Landmark className="size-4 text-ok" /> {d.title}
+          <p className={cn("flex items-start gap-2 text-sm font-medium", (d.status === "rejected" || d.status === "revoked") && "text-muted-foreground line-through")}>
+            <Landmark className="mt-0.5 size-4 shrink-0 text-ok" /> {d.text}
           </p>
-          {d.body && <p className="mt-1 text-[13px] leading-relaxed text-muted-foreground">{d.body}</p>}
-          <p className="mt-2 flex items-center gap-2 text-[11px] text-muted-foreground">
-            <span className={cn("rounded-full px-1.5 py-px", d.status === "confirmed" ? "bg-ok-soft text-ok" : "bg-attention-soft")}>{d.status === "confirmed" ? "已确认" : "待确认"}</span>
-            <span className="font-mono">来源 #{d.seq}</span>
-          </p>
+          <div className="mt-2 flex flex-wrap items-center gap-2 text-[11px] text-muted-foreground">
+            <span className={cn("rounded-full px-1.5 py-px font-medium", DECISION_STATUS[d.status]?.cls)}>{DECISION_STATUS[d.status]?.label ?? d.status}</span>
+            {d.seq !== null && <SeqLink projectId={projectId} groupId={groupId} seq={d.seq} />}
+            {d.revokedReason && <span>原因：{d.revokedReason}</span>}
+            {canDecide && d.status === "proposed" && (
+              <span className="ml-auto flex gap-1">
+                <Button size="sm" variant="ghost" className="h-6 px-2 text-xs" onClick={() => act.mutate({ id: d.id, action: "confirm" })}>
+                  确认
+                </Button>
+                <Button
+                  size="sm"
+                  variant="ghost"
+                  className="h-6 px-2 text-xs"
+                  onClick={() => {
+                    const reason = window.prompt("驳回原因");
+                    if (reason?.trim()) act.mutate({ id: d.id, action: "reject", reason });
+                  }}
+                >
+                  驳回
+                </Button>
+              </span>
+            )}
+          </div>
         </li>
       ))}
     </ul>

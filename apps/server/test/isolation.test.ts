@@ -1,6 +1,7 @@
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { signupGrant } from "../src/auth";
-import { tenant } from "../src/db/schema";
+import { eq } from "drizzle-orm";
+import { decision, modelProvider, question, session, tenant } from "../src/db/schema";
 import { newId } from "../src/core/ids";
 import { createTestApp, type TestApp } from "./helpers";
 
@@ -54,6 +55,19 @@ beforeAll(async () => {
   fixtures.proposals = prp.id;
   const apv = await t.req("POST", `/api/v1/tasks/${tk.body.id}/approvals`, { token: a.body.token, body: { kind: "budget" } });
   fixtures.approvals = apv.body.id;
+  // S4: decisions, questions, sessions, model providers.
+  const tA = meA.tenant.id as string;
+  fixtures.decisions = newId("dcs");
+  await t.s.db.root.insert(decision).values({ id: fixtures.decisions, tenantId: tA, projectId: proj.body.id, groupId: proj.body.mainGroupId, text: "机密决策" });
+  fixtures.action = "confirm";
+  fixtures.questions = newId("qst");
+  await t.s.db.root.insert(question).values({ id: fixtures.questions, tenantId: tA, groupId: proj.body.mainGroupId, text: "机密问题", deadlineAt: new Date(Date.now() + 3600_000) });
+  fixtures.sessions = newId("ses");
+  await t.s.db.root
+    .insert(session)
+    .values({ id: fixtures.sessions, tenantId: tA, agentId: proj.body.captainAgentId, projectId: proj.body.id, scopeType: "resident", scopeId: proj.body.mainGroupId, agentConfigVersion: 1 });
+  await t.s.llm.ensureDefaults(tA);
+  fixtures.providers = (await t.s.db.root.select().from(modelProvider).where(eq(modelProvider.tenantId, tA)))[0]!.id;
   // Tenant B (second tenant created directly; self-host normally has one).
   const tb = newId("ten");
   await t.s.db.root.insert(tenant).values({ id: tb, name: "B", domain: "b.test" });

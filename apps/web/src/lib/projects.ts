@@ -1,6 +1,7 @@
 import { useQuery } from "@tanstack/react-query";
 import { useEffect } from "react";
 import { realtime } from "./realtime";
+import { invalidateCaptain } from "./captain";
 import { api, unwrap } from "./api";
 import { qk, queryClient } from "./query";
 
@@ -45,6 +46,7 @@ export function useProjectLive(projectId: string) {
           if (typeof pid === "string") void queryClient.invalidateQueries({ queryKey: ["proposal", pid] });
         }
       }
+      if (t === "summary.updated" || t.startsWith("decision.") || t.startsWith("question.")) invalidateCaptain(t, f.event.payload);
       if (t.startsWith("project.") || t.startsWith("task.")) {
         void queryClient.invalidateQueries({ queryKey: qk.project(projectId) });
         void queryClient.invalidateQueries({ queryKey: qk.projects });

@@ -788,6 +788,8 @@ export const modelProvider = pgTable("model_provider", {
   baseUrl: text().notNull(),
   credentialId: text(),
   kind: text().$type<"openai_compatible" | "scripted">().notNull(),
+  /** Wire dialect for openai_compatible providers: plain OpenAI chat/completions, or Ollama's native /api/chat (think:false). */
+  dialect: text().$type<"openai" | "ollama">().notNull().default("openai"),
   isExternal: boolean().notNull().default(true),
   status: text().notNull().default("active"),
   circuitState: jsonb().$type<{ state: "closed" | "open" | "half_open"; failures: number; openedAt?: string }>().notNull().default({ state: "closed", failures: 0 }),
@@ -809,6 +811,9 @@ export const model = pgTable("model", {
   outputPrice: numeric({ precision: 14, scale: 8, mode: "number" }),
   currency: text().notNull().default("USD"),
   embeddingDim: integer(),
+  supportsStreaming: boolean().notNull().default(true),
+  /** Ollama: disable "thinking" for reasoning-capable small models (ADR-0003). */
+  thinkOff: boolean().notNull().default(false),
   tier: text().$type<"small" | "large">().notNull().default("small"),
   notes: text(),
   createdAt: createdAt(),

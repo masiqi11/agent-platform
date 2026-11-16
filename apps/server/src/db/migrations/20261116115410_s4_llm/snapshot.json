@@ -1,0 +1,115 @@
+{
+  "type": "diff",
+  "version": "9",
+  "dialect": "postgres",
+  "id": "29276d00-ec65-45ab-a7e6-0419228963e0",
+  "prevIds": [
+    "81f39571-0cdf-4171-85c5-5baea939a677"
+  ],
+  "footprints": [
+    {
+      "statementType": "add_column",
+      "statementTarget": [
+        "column",
+        "public",
+        "model",
+        "supports_streaming"
+      ],
+      "writes": [
+        "s|col|public.model.supports_streaming",
+        "n|col|public.model.supports_streaming",
+        "e|col|public.model.supports_streaming"
+      ],
+      "reads": [
+        "n|tbl|public.model",
+        "n|sch|public"
+      ]
+    },
+    {
+      "statementType": "add_column",
+      "statementTarget": [
+        "column",
+        "public",
+        "model",
+        "think_off"
+      ],
+      "writes": [
+        "s|col|public.model.think_off",
+        "n|col|public.model.think_off",
+        "e|col|public.model.think_off"
+      ],
+      "reads": [
+        "n|tbl|public.model",
+        "n|sch|public"
+      ]
+    },
+    {
+      "statementType": "add_column",
+      "statementTarget": [
+        "column",
+        "public",
+        "model_provider",
+        "dialect"
+      ],
+      "writes": [
+        "s|col|public.model_provider.dialect",
+        "n|col|public.model_provider.dialect",
+        "e|col|public.model_provider.dialect"
+      ],
+      "reads": [
+        "n|tbl|public.model_provider",
+        "n|sch|public"
+      ]
+    }
+  ],
+  "deltas": [
+    {
+      "op": "create",
+      "row": {
+        "schema": "public",
+        "table": "model",
+        "name": "supports_streaming",
+        "type": "boolean",
+        "typeSchema": null,
+        "notNull": true,
+        "dimensions": 0,
+        "default": "true",
+        "generated": null,
+        "identity": null,
+        "entityType": "columns"
+      }
+    },
+    {
+      "op": "create",
+      "row": {
+        "schema": "public",
+        "table": "model",
+        "name": "think_off",
+        "type": "boolean",
+        "typeSchema": null,
+        "notNull": true,
+        "dimensions": 0,
+        "default": "false",
+        "generated": null,
+        "identity": null,
+        "entityType": "columns"
+      }
+    },
+    {
+      "op": "create",
+      "row": {
+        "schema": "public",
+        "table": "model_provider",
+        "name": "dialect",
+        "type": "text",
+        "typeSchema": null,
+        "notNull": true,
+        "dimensions": 0,
+        "default": "'openai'",
+        "generated": null,
+        "identity": null,
+        "entityType": "columns"
+      }
+    }
+  ]
+}

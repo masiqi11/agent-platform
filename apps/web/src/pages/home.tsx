@@ -1,6 +1,6 @@
 import { useMutation } from "@tanstack/react-query";
 import { Link, useNavigate } from "@tanstack/react-router";
-import { AlertOctagon, CheckCircle2, FolderKanban, GitPullRequest, Inbox, Loader, Plus } from "lucide-react";
+import { AlertOctagon, CheckCircle2, Compass, FolderKanban, GitPullRequest, Inbox, Loader, Plus, Send } from "lucide-react";
 import { useState } from "react";
 import { PrincipalAvatar } from "@/components/agent-avatar";
 import { EmptyState, ErrorState, PageHeader } from "@/components/states";
@@ -134,6 +134,57 @@ function CreateProjectDialog({ open, onOpenChange }: { open: boolean; onOpenChan
   );
 }
 
+/** "问全局船长" (FR-CAP global): answers from the project directory + summaries, always with sources (INV-04). */
+function AskGlobalCaptain() {
+  const [q, setQ] = useState("");
+  const m = useMutation({ mutationFn: (question: string) => unwrap(api.api.v1.captain.ask.post({ question })) });
+  return (
+    <Card className="gap-3 py-4" data-testid="ask-global">
+      <CardHeader className="px-4">
+        <CardTitle className="flex items-center gap-2 text-sm">
+          <Compass className="size-4 text-agent" /> 问全局船长
+        </CardTitle>
+      </CardHeader>
+      <CardContent className="space-y-3 px-4">
+        <form
+          className="flex gap-2"
+          onSubmit={(e) => {
+            e.preventDefault();
+            if (q.trim()) m.mutate(q.trim());
+          }}
+        >
+          <Input value={q} onChange={(e) => setQ(e.target.value)} placeholder="例如：哪个项目在处理支付回调超时？" aria-label="问全局船长" />
+          <Button type="submit" size="icon" aria-label="提问" disabled={m.isPending || !q.trim()}>
+            {m.isPending ? <Loader className="size-4 animate-spin" /> : <Send className="size-4" />}
+          </Button>
+        </form>
+        {m.error ? <ErrorState error={m.error} /> : null}
+        {m.data && (
+          <div className="rounded-lg bg-muted/50 p-3 text-[13.5px] leading-relaxed" data-testid="global-answer">
+            <p className="whitespace-pre-wrap">{m.data.answer}</p>
+            {m.data.sources.length > 0 && (
+              <div className="mt-2 flex flex-wrap gap-1.5">
+                {m.data.sources.map((s) => (
+                  <Link
+                    key={s.projectId}
+                    to="/projects/$projectId"
+                    params={{ projectId: s.projectId }}
+                    className="rounded-full border bg-card px-2 py-0.5 font-mono text-[11px] hover:border-ring/50"
+                    title={s.snippet}
+                  >
+                    来源 · {s.key}
+                  </Link>
+                ))}
+              </div>
+            )}
+          </div>
+        )}
+        {!m.data && <p className="text-xs text-muted-foreground">依据各项目目录与群摘要回答；没有依据时会直接说“未检索到依据”。</p>}
+      </CardContent>
+    </Card>
+  );
+}
+
 export function HomePage() {
   const { data: me } = useMe();
   const projects = useProjects();
@@ -180,18 +231,21 @@ export function HomePage() {
             </div>
           )}
         </section>
-        <Card className="h-fit gap-3 py-4">
-          <CardHeader className="px-4">
-            <CardTitle className="flex items-center gap-2 text-sm">
-              <Inbox className="size-4 text-attention" /> {t("home.needs")}
-            </CardTitle>
-          </CardHeader>
-          <CardContent className="px-4">
-            <p className="flex items-center gap-2 text-sm text-muted-foreground">
-              <CheckCircle2 className="size-4 text-ok" /> {t("home.nothing")}
-            </p>
-          </CardContent>
-        </Card>
+        <div className="space-y-4">
+          <AskGlobalCaptain />
+          <Card className="h-fit gap-3 py-4">
+            <CardHeader className="px-4">
+              <CardTitle className="flex items-center gap-2 text-sm">
+                <Inbox className="size-4 text-attention" /> {t("home.needs")}
+              </CardTitle>
+            </CardHeader>
+            <CardContent className="px-4">
+              <p className="flex items-center gap-2 text-sm text-muted-foreground">
+                <CheckCircle2 className="size-4 text-ok" /> {t("home.nothing")}
+              </p>
+            </CardContent>
+          </Card>
+        </div>
       </div>
       <CreateProjectDialog open={create} onOpenChange={setCreate} />
     </div>

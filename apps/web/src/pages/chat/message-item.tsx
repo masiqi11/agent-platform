@@ -2,6 +2,7 @@ import { CornerUpLeft, FileText, KanbanSquare, ListTodo, ListTree, MoreHorizonta
 import { memo, useState } from "react";
 import { PrincipalAvatar } from "@/components/agent-avatar";
 import { Markdown } from "@/components/markdown";
+import { DecisionCard, QuestionCard, SummaryCardInline } from "@/components/captain-cards";
 import { ProposalPanel } from "@/components/proposal-panel";
 import { StatusPill } from "@/components/task-bits";
 import { Link } from "@tanstack/react-router";
@@ -114,7 +115,12 @@ export const MessageItem = memo(function MessageItem({
           <p className="text-sm italic text-muted-foreground">{m.body}</p>
         ) : card ? (
           <div className={cn("mt-1.5 mb-1 max-w-2xl rounded-xl border px-4 py-3", card.cls)}>
-            <p className={cn("mb-1 flex items-center gap-1.5 text-xs font-semibold tracking-wide text-muted-foreground uppercase", (m.kind === "proposal_card" || m.kind === "task_card") && "hidden")}>
+            <p
+              className={cn(
+                "mb-1 flex items-center gap-1.5 text-xs font-semibold tracking-wide text-muted-foreground uppercase",
+                (m.kind === "proposal_card" || m.kind === "task_card" || m.kind === "question" || m.kind === "decision_card" || m.kind === "summary_card") && "hidden",
+              )}
+            >
               <FileText className="size-3.5" /> {card.label}
               {typeof m.blocks?.title === "string" ? <span className="normal-case tracking-normal text-foreground">· {m.blocks.title}</span> : null}
             </p>
@@ -122,8 +128,12 @@ export const MessageItem = memo(function MessageItem({
               <ProposalPanel proposalId={m.blocks.proposalId} canDecide={canDecide} compact />
             ) : m.kind === "task_card" && typeof m.blocks?.taskId === "string" ? (
               <TaskCardInline taskId={m.blocks.taskId} />
-            ) : m.kind === "decision_card" && typeof m.blocks?.title === "string" ? (
-              <Markdown text={m.body.split("\n").slice(1).join("\n").trim()} className="text-muted-foreground" />
+            ) : m.kind === "question" && m.blocks ? (
+              <QuestionCard blocks={m.blocks} body={m.body} canAnswer={canDecide} />
+            ) : m.kind === "decision_card" && m.blocks ? (
+              <DecisionCard blocks={m.blocks} body={m.body} canDecide={canDecide} />
+            ) : m.kind === "summary_card" && m.blocks ? (
+              <SummaryCardInline blocks={m.blocks} body={m.body} />
             ) : (
               <Markdown text={m.body} mentionNames={mentionNames} projectKey={projectKey} />
             )}

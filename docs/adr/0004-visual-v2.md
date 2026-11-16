@@ -15,5 +15,5 @@
 
 ## 影响
 
-- 截图：`screenshots/chat-v2-*`、`chat-tasks-v2-*`、`project-home-v2-*`（`e2e/v2-visual.spec.ts`）。
+- 截图：`screenshots/chat-v2-*`、`chat-tasks-v2-*`、`project-home-v2-*`（`e2e/s2b-visual-v2.spec.ts`）。
 - 右栏"摘要/决策"在 S4 前从已加载时间线中的决策卡汇总，非独立 API。

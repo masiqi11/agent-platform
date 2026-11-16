@@ -20,11 +20,15 @@ import { createTasks } from "./modules/tasks/service";
 import { createInbox } from "./modules/inbox/service";
 import { createProposals } from "./modules/proposals/service";
 import { createApprovals } from "./modules/approvals/service";
+import { createLlm } from "./modules/llm/service";
+import { createRuntime } from "./modules/runtime/service";
+import { createCaptain } from "./modules/captain/service";
 
 export interface ServiceOptions {
   /** Worker/consumer owner id (unique per process). */
   owner?: string;
   db?: Database;
+  llm?: import("./modules/llm/service").LlmOptions;
 }
 
 export function createServices(config: Config, opts: ServiceOptions = {}) {
@@ -59,6 +63,10 @@ export function createServices(config: Config, opts: ServiceOptions = {}) {
   const inbox = createInbox({ db, events, identity });
   const proposals = createProposals({ db, audit, events, identity, projects, chat, tasks, inbox });
   const approvals = createApprovals({ db, audit, events, identity, projects, tasks, inbox });
+  const llm = createLlm({ config, db, audit, events, identity, vault }, opts.llm);
+  const runtime = createRuntime({ config, db, audit, events, identity, owner });
+  const captain = createCaptain({ config, db, audit, events, jobs, identity, projects, chat, tasks, proposals, inbox, llm, runtime, realtime });
+  proposals.hooks.afterAccept = (ctx, p, ids) => captain.afterAccept(ctx, p, ids);
 
   const base = {
     config,
@@ -83,6 +91,9 @@ export function createServices(config: Config, opts: ServiceOptions = {}) {
     inbox,
     proposals,
     approvals,
+    llm,
+    runtime,
+    captain,
     addRedactionValue,
   };
   return base;
