@@ -1,4 +1,4 @@
-import { DEFAULT_PROJECT_SETTINGS, type ProjectSettings } from "@ap/shared";
+import { DEFAULT_AGENT_TOOLS, DEFAULT_PROJECT_SETTINGS, type ProjectSettings } from "@ap/shared";
 import { and, asc, eq, inArray, sql } from "drizzle-orm";
 import type { Database } from "../../db";
 import { agent, appUser, chatGroup, groupMember, module_, principal, project, projectMember, task } from "../../db/schema";
@@ -51,7 +51,7 @@ export function createProjects(d: ProjectDeps) {
         name: `${key} 船长`,
         role: "sub_captain",
         instructions: "你是本项目的船长：读懂群聊，维护带来源的摘要，提议任务与分配，回答项目问题。不写代码，不批准合并。",
-        toolAllowlist: [],
+        toolAllowlist: DEFAULT_AGENT_TOOLS.sub_captain,
       });
       await q.insert(projectMember).values({ tenantId: ctx.tenantId, projectId: id, principalId: agentPrincipal, role: "member" });
       await q.insert(chatGroup).values({ id: groupId, tenantId: ctx.tenantId, projectId: id, name: `${input.name} 主群`, kind: "main", captainAgentId: agentId });

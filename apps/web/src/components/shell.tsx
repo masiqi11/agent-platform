@@ -1,5 +1,24 @@
 import { Link, useNavigate, useRouterState } from "@tanstack/react-router";
-import { Bell, ChevronsLeft, ChevronsRight, Home, Inbox, LogOut, Monitor, Moon, ScrollText, Search, Sun, Users, WifiOff, type LucideIcon } from "lucide-react";
+import {
+  Bell,
+  Bot,
+  ChevronsLeft,
+  ChevronsRight,
+  FolderKanban,
+  Home,
+  Inbox,
+  LayoutDashboard,
+  LogOut,
+  MessagesSquare,
+  Monitor,
+  Moon,
+  ScrollText,
+  Search,
+  Sun,
+  Users,
+  WifiOff,
+  type LucideIcon,
+} from "lucide-react";
 import { useEffect, useState, type ReactNode } from "react";
 import { Avatar, AvatarFallback } from "@/components/ui/avatar";
 import { Button } from "@/components/ui/button";
@@ -10,6 +29,7 @@ import { Logo } from "@/components/logo";
 import { api } from "@/lib/api";
 import { t, type MsgKey } from "@/lib/i18n";
 import { canAudit, isAdmin, useMe } from "@/lib/me";
+import { useGroups, useProjectLive, useProjects } from "@/lib/projects";
 import { queryClient } from "@/lib/query";
 import { realtime, useConnectionStatus } from "@/lib/realtime";
 import { session } from "@/lib/session";
@@ -21,11 +41,16 @@ interface NavItem {
   label: MsgKey;
   icon: LucideIcon;
   badge?: number;
+  /** label is a literal string, not an i18n key */
+  raw?: boolean;
+  exact?: boolean;
 }
 
-function NavLink({ item, collapsed }: { item: NavItem; collapsed: boolean }) {
-  const path = useRouterState({ select: (s) => s.location.pathname });
-  const active = item.to === "/" ? path === "/" : path.startsWith(item.to);
+function NavLink({ item, collapsed, path: given }: { item: NavItem; collapsed: boolean; path?: string }) {
+  const current = useRouterState({ select: (s) => s.location.pathname });
+  const path = given ?? current;
+  const active = item.to === "/" || item.exact ? path === item.to : path.startsWith(item.to);
+  const label = item.raw ? item.label : t(item.label);
   const body = (
     <Link
       to={item.to}
@@ -37,7 +62,7 @@ function NavLink({ item, collapsed }: { item: NavItem; collapsed: boolean }) {
       aria-current={active ? "page" : undefined}
     >
       <item.icon className={cn("size-4 shrink-0", active ? "text-primary" : "text-muted-foreground")} aria-hidden />
-      {!collapsed && <span className="truncate">{t(item.label)}</span>}
+      {!collapsed && <span className="truncate">{label}</span>}
       {!collapsed && item.badge ? <span className="ml-auto rounded-full bg-attention px-1.5 text-[11px] font-semibold leading-5 text-black/80">{item.badge}</span> : null}
     </Link>
   );
@@ -45,7 +70,7 @@ function NavLink({ item, collapsed }: { item: NavItem; collapsed: boolean }) {
   return (
     <Tooltip>
       <TooltipTrigger asChild>{body}</TooltipTrigger>
-      <TooltipContent side="right">{t(item.label)}</TooltipContent>
+      <TooltipContent side="right">{label}</TooltipContent>
     </Tooltip>
   );
 }
@@ -59,13 +84,59 @@ function Section({ label, collapsed, children }: { label: string; collapsed: boo
   );
 }
 
+function ProjectNav({ collapsed }: { collapsed: boolean }) {
+  const { data: projects } = useProjects();
+  const path = useRouterState({ select: (s) => s.location.pathname });
+  const activeId = path.match(/^\/projects\/([^/]+)/)?.[1];
+  const list = (projects ?? []).filter((p) => p.status === "active" || p.id === activeId);
+  if (list.length === 0) return null;
+  return (
+    <Section label="项目" collapsed={collapsed}>
+      {list.map((p) =>
+        p.id === activeId ? (
+          <ActiveProject key={p.id} id={p.id} name={p.name} pkey={p.key} collapsed={collapsed} path={path} />
+        ) : (
+          <NavLink key={p.id} item={{ to: `/projects/${p.id}`, label: p.name as MsgKey, icon: FolderKanban, raw: true }} collapsed={collapsed} />
+        ),
+      )}
+    </Section>
+  );
+}
+
+function ActiveProject({ id, name, pkey, collapsed, path }: { id: string; name: string; pkey: string; collapsed: boolean; path: string }) {
+  const { data: groups } = useGroups(id);
+  useProjectLive(id);
+  const unread = (groups ?? []).reduce((n, g) => n + (g.member ? g.unread : 0), 0);
+  const subs: NavItem[] = [
+    { to: `/projects/${id}`, label: "概览" as MsgKey, icon: LayoutDashboard, raw: true, exact: true },
+    { to: `/projects/${id}/chat`, label: "对话" as MsgKey, icon: MessagesSquare, raw: true, badge: unread },
+    { to: `/projects/${id}/agents`, label: "Agent" as MsgKey, icon: Bot, raw: true },
+  ];
+  return (
+    <div className="rounded-md bg-sidebar-active/30 py-0.5">
+      {!collapsed && (
+        <p className="flex items-center gap-2 px-2 py-1 text-sm font-medium" title={name}>
+          <FolderKanban className="size-4 text-primary" aria-hidden />
+          <span className="truncate">{name}</span>
+          <span className="ml-auto font-mono text-[10px] text-muted-foreground">{pkey}</span>
+        </p>
+      )}
+      <div className={cn("space-y-0.5", !collapsed && "pl-3")}>
+        {subs.map((i) => (
+          <NavLink key={i.to} item={i} collapsed={collapsed} path={path} />
+        ))}
+      </div>
+    </div>
+  );
+}
+
 export function Sidebar({ collapsed, onToggle, extra }: { collapsed: boolean; onToggle(): void; extra?: ReactNode }) {
   const { data: me } = useMe();
   const admin: NavItem[] = [];
   if (isAdmin(me)) admin.push({ to: "/admin/users", label: "nav.users", icon: Users });
   if (canAudit(me)) admin.push({ to: "/audit", label: "nav.audit", icon: ScrollText });
   return (
-    <aside className={cn("sticky top-0 flex h-dvh shrink-0 flex-col border-r bg-sidebar px-2.5 py-3 transition-[width]", collapsed ? "w-14" : "w-60")} aria-label="主导航">
+    <aside className={cn("flex h-dvh shrink-0 flex-col border-r bg-sidebar px-2.5 py-3 transition-[width]", collapsed ? "w-14" : "w-60")} aria-label="主导航">
       <div className={cn("mb-4 flex items-center gap-2 px-1", collapsed && "justify-center px-0")}>
         <Logo />
         {!collapsed && (
@@ -80,6 +151,7 @@ export function Sidebar({ collapsed, onToggle, extra }: { collapsed: boolean; on
           <NavLink item={{ to: "/", label: "nav.home", icon: Home }} collapsed={collapsed} />
           <NavLink item={{ to: "/inbox", label: "nav.inbox", icon: Inbox }} collapsed={collapsed} />
         </div>
+        <ProjectNav collapsed={collapsed} />
         {extra}
         {admin.length > 0 && (
           <Section label={t("nav.admin")} collapsed={collapsed}>
@@ -169,6 +241,7 @@ function UserMenu() {
 export function CommandPalette({ open, onOpenChange }: { open: boolean; onOpenChange(v: boolean): void }) {
   const navigate = useNavigate();
   const { data: me } = useMe();
+  const { data: projects } = useProjects();
   const go = (to: string) => {
     onOpenChange(false);
     void navigate({ to });
@@ -196,6 +269,15 @@ export function CommandPalette({ open, onOpenChange }: { open: boolean; onOpenCh
             </CommandItem>
           )}
         </CommandGroup>
+        {projects && projects.length > 0 && (
+          <CommandGroup heading="项目">
+            {projects.map((p) => (
+              <CommandItem key={p.id} value={`${p.key} ${p.name}`} onSelect={() => go(`/projects/${p.id}/chat`)}>
+                <MessagesSquare /> {p.name} <span className="ml-auto font-mono text-xs text-muted-foreground">{p.key}</span>
+              </CommandItem>
+            ))}
+          </CommandGroup>
+        )}
       </CommandList>
     </CommandDialog>
   );
@@ -215,6 +297,8 @@ export function AppShell({ title, children, sidebarExtra }: { title?: ReactNode;
   const [collapsed, setCollapsed] = useState(() => localStorage.getItem("ap.sidebar") === "1" || window.innerWidth < 1280);
   const [cmd, setCmd] = useState(false);
   const navigate = useNavigate();
+  const path = useRouterState({ select: (s) => s.location.pathname });
+  const bleed = /^\/projects\/[^/]+\/chat/.test(path);
   useEffect(() => {
     let g = false;
     const on = (e: KeyboardEvent) => {
@@ -237,7 +321,7 @@ export function AppShell({ title, children, sidebarExtra }: { title?: ReactNode;
     return () => window.removeEventListener("keydown", on);
   }, [navigate]);
   return (
-    <div className="flex min-h-dvh">
+    <div className="flex h-dvh overflow-hidden">
       <Sidebar
         collapsed={collapsed}
         extra={sidebarExtra}
@@ -248,7 +332,7 @@ export function AppShell({ title, children, sidebarExtra }: { title?: ReactNode;
           })
         }
       />
-      <div className="flex min-w-0 flex-1 flex-col">
+      <div className={cn("flex min-w-0 flex-1 flex-col", bleed ? "overflow-hidden" : "overflow-y-auto")}>
         <ConnectionBar />
         <header className="sticky top-0 z-20 flex h-12 items-center gap-3 border-b bg-background/85 px-4 backdrop-blur">
           <div className="min-w-0 flex-1 truncate text-sm text-muted-foreground">{title}</div>
@@ -268,7 +352,7 @@ export function AppShell({ title, children, sidebarExtra }: { title?: ReactNode;
           <ThemeMenu />
           <UserMenu />
         </header>
-        <main className="mx-auto w-full max-w-[1400px] flex-1 px-6 py-6">{children}</main>
+        <main className={bleed ? "flex min-h-0 flex-1" : "mx-auto w-full max-w-[1400px] flex-1 px-6 py-6"}>{children}</main>
       </div>
       <CommandPalette open={cmd} onOpenChange={setCmd} />
     </div>

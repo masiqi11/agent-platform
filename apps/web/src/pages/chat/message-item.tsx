@@ -1,0 +1,169 @@
+import { CornerUpLeft, FileText, ListTree, MoreHorizontal, Paperclip, Pencil, RotateCcw, Trash2 } from "lucide-react";
+import { memo } from "react";
+import { PrincipalAvatar } from "@/components/agent-avatar";
+import { Markdown } from "@/components/markdown";
+import { Button } from "@/components/ui/button";
+import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
+import { api, unwrap } from "@/lib/api";
+import { absoluteTime } from "@/lib/i18n";
+import { cn } from "@/lib/utils";
+import type { Msg } from "./timeline-store";
+
+const CARD: Record<string, { label: string; cls: string }> = {
+  summary_card: { label: "摘要", cls: "border-info/40 bg-info-soft/60" },
+  proposal_card: { label: "任务提议", cls: "border-attention/50 bg-attention-soft/60" },
+  task_card: { label: "任务", cls: "border-primary/40 bg-accent/60" },
+  question: { label: "问题", cls: "border-attention/50 bg-attention-soft/40" },
+  decision_card: { label: "决策", cls: "border-ok/40 bg-ok-soft/60" },
+};
+
+export interface MessageActions {
+  onReply(m: Msg): void;
+  onEdit(m: Msg): void;
+  onDelete(m: Msg): void;
+  onThread(m: Msg): void;
+  onRetry(m: Msg): void;
+}
+
+function fmtTime(iso: string) {
+  return new Date(iso).toLocaleTimeString("zh-CN", { hour: "2-digit", minute: "2-digit", hour12: false });
+}
+
+async function openAttachment(id: string) {
+  const r = await unwrap(api.api.v1.attachments({ id }).link.get());
+  window.open(r.url, "_blank", "noopener,noreferrer");
+}
+
+export const MessageItem = memo(function MessageItem({
+  m,
+  compact,
+  highlight,
+  meId,
+  canModerate,
+  mentionNames,
+  projectKey,
+  actions,
+}: {
+  m: Msg;
+  compact: boolean;
+  highlight: boolean;
+  meId: string;
+  canModerate: boolean;
+  mentionNames: string[];
+  projectKey: string;
+  actions: MessageActions;
+}) {
+  const isAgent = m.author.kind === "agent";
+  const own = m.author.principalId === meId;
+  const card = CARD[m.kind];
+  const editable = own && !isAgent && !m.deleted && !m.pending && Date.now() - new Date(m.createdAt).getTime() < 15 * 60_000;
+  const deletable = !m.deleted && !m.pending && (own || canModerate);
+  const mentionsMe = m.mentions.includes(meId);
+  return (
+    <div
+      className={cn(
+        "group relative flex gap-3 px-5 transition-colors hover:bg-muted/40",
+        compact ? "py-0.5" : "pt-2.5 pb-0.5",
+        highlight && "bg-attention-soft/70 hover:bg-attention-soft/70",
+        mentionsMe && !highlight && "border-l-2 border-attention bg-attention-soft/25",
+        m.pending && "opacity-70",
+      )}
+      data-seq={m.seq}
+      data-testid="message"
+    >
+      <div className="w-8 shrink-0">
+        {compact ? (
+          <span className="invisible block pt-1 text-right text-[10px] text-muted-foreground group-hover:visible" title={absoluteTime(m.createdAt)}>
+            {fmtTime(m.createdAt)}
+          </span>
+        ) : (
+          <PrincipalAvatar name={m.author.name} kind={m.author.kind} />
+        )}
+      </div>
+      <div className="min-w-0 flex-1">
+        {!compact && (
+          <div className="flex items-baseline gap-2">
+            <span className={cn("text-sm font-semibold", isAgent && "text-agent")}>{m.author.name}</span>
+            {isAgent && <span className="rounded bg-agent-soft px-1 py-px text-[10px] font-medium text-agent">Agent</span>}
+            {m.author.name !== m.author.currentName && <span className="text-[11px] text-muted-foreground">（现名 {m.author.currentName}）</span>}
+            <span className="text-[11px] text-muted-foreground" title={absoluteTime(m.createdAt)}>
+              {fmtTime(m.createdAt)}
+            </span>
+            <span className="font-mono text-[10px] text-muted-foreground/60">#{m.seq > 0 ? m.seq : "…"}</span>
+          </div>
+        )}
+        {m.replyTo && (
+          <div className="mt-0.5 mb-1 flex items-center gap-1.5 border-l-2 pl-2 text-xs text-muted-foreground">
+            <CornerUpLeft className="size-3" aria-hidden />
+            <span className="font-medium">{m.replyTo.authorLabel}</span>
+            <span className="truncate">{m.replyTo.excerpt}</span>
+          </div>
+        )}
+        {m.deleted ? (
+          <p className="text-sm italic text-muted-foreground">{m.body}</p>
+        ) : card ? (
+          <div className={cn("my-1 max-w-2xl rounded-lg border px-3 py-2", card.cls)}>
+            <p className="mb-1 flex items-center gap-1.5 text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+              <FileText className="size-3.5" /> {card.label}
+              {typeof m.blocks?.title === "string" ? <span className="normal-case tracking-normal text-foreground">· {m.blocks.title}</span> : null}
+            </p>
+            <Markdown text={m.body} mentionNames={mentionNames} projectKey={projectKey} />
+          </div>
+        ) : (
+          <Markdown text={m.body} mentionNames={mentionNames} projectKey={projectKey} />
+        )}
+        {m.attachments.length > 0 && (
+          <div className="mt-1 flex flex-wrap gap-1.5">
+            {m.attachments.map((a) => (
+              <button key={a.id} type="button" onClick={() => void openAttachment(a.id)} className="inline-flex items-center gap-1.5 rounded-md border bg-card px-2 py-1 text-xs hover:border-ring/50">
+                <Paperclip className="size-3" /> {a.name} <span className="text-muted-foreground">{(a.size / 1024).toFixed(1)} KB</span>
+                {a.scanStatus === "unscanned" && <span className="text-muted-foreground">· 未扫描</span>}
+              </button>
+            ))}
+          </div>
+        )}
+        <div className="flex gap-2 text-[11px] text-muted-foreground">
+          {m.editedAt && !m.deleted && <span title={absoluteTime(m.editedAt)}>（已编辑）</span>}
+          {m.correctedAt && <span className="text-attention">已更正</span>}
+          {m.pending === "sending" && <span>发送中…</span>}
+          {m.pending === "failed" && (
+            <button type="button" className="inline-flex items-center gap-1 text-danger hover:underline" onClick={() => actions.onRetry(m)}>
+              <RotateCcw className="size-3" /> 发送失败，点击重发
+            </button>
+          )}
+        </div>
+      </div>
+      {!m.pending && !m.deleted && (
+        <div className="absolute -top-3 right-4 hidden items-center rounded-md border bg-popover shadow-sm group-hover:flex group-focus-within:flex">
+          <Button variant="ghost" size="icon" className="size-7" aria-label="回复" onClick={() => actions.onReply(m)}>
+            <CornerUpLeft className="size-3.5" />
+          </Button>
+          <Button variant="ghost" size="icon" className="size-7" aria-label="开线程" onClick={() => actions.onThread(m)}>
+            <ListTree className="size-3.5" />
+          </Button>
+          {(editable || deletable) && (
+            <DropdownMenu>
+              <DropdownMenuTrigger asChild>
+                <Button variant="ghost" size="icon" className="size-7" aria-label="更多">
+                  <MoreHorizontal className="size-3.5" />
+                </Button>
+              </DropdownMenuTrigger>
+              <DropdownMenuContent align="end">
+                {editable && (
+                  <DropdownMenuItem onClick={() => actions.onEdit(m)}>
+                    <Pencil className="size-4" /> 编辑
+                  </DropdownMenuItem>
+                )}
+                {deletable && (
+                  <DropdownMenuItem variant="destructive" onClick={() => actions.onDelete(m)}>
+                    <Trash2 className="size-4" /> 删除
+                  </DropdownMenuItem>
+                )}
+              </DropdownMenuContent>
+            </DropdownMenu>
+          )}
+        </div>
+      )}
+    </div>
+  );
+});

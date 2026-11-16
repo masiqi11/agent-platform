@@ -22,12 +22,12 @@
 
 | 编号 | 内容                                                        | 结果                                                                | 证据                                           |
 | ---- | ----------------------------------------------------------- | ------------------------------------------------------------------- | ---------------------------------------------- |
-| V1 | Eden treaty 端到端类型 | ✅ 改 `/me` 响应字段名后 `apps/web` 的 `tsc` 立即报错 | 手工验证（S1） |
+| V1   | Eden treaty 端到端类型                                      | ✅ 改 `/me` 响应字段名后 `apps/web` 的 `tsc` 立即报错               | 手工验证（S1）                                 |
 | V2   | TS 7 `tsc` 对整个 monorepo 类型检查                         | ✅ 服务端 `tsc -p` 0 错误                                           | `bun run typecheck`                            |
 | V3   | drizzle ALS 事务上下文                                      | ✅                                                                  | `test/kernel.test.ts`                          |
 | V4   | better-auth 挂载到 Elysia（`/api/auth/*`，`parse: "none"`） | ✅                                                                  | `test/identity.test.ts`                        |
 | V5   | Elysia WebSocket                                            | ✅ 需 `.use(websocket())`（`elysia/websocket`），否则构建路由时报错 | `test/realtime.test.ts`                        |
-| V6 | 子进程进程组终止 | 待 S5 | — |
+| V6   | 子进程进程组终止                                            | 待 S5                                                               | —                                              |
 | V7   | LISTEN/NOTIFY 跨连接                                        | ✅                                                                  | `test/kernel.test.ts`、`test/realtime.test.ts` |
 | V8   | 连接池空闲断开不崩溃（TRAP-12）                             | ✅                                                                  | `test/kernel.test.ts`                          |
 | V9   | 手写迁移不被 `drizzle-kit generate` 覆盖                    | ✅ 生成器输出 "No schema changes"                                   | 手工验证                                       |

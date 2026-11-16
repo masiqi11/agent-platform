@@ -18,4 +18,13 @@ export const qk = {
   users: ["users"] as const,
   audit: (f: Record<string, unknown>) => ["audit", f] as const,
   auditVerify: ["audit-verify"] as const,
+  projects: ["projects"] as const,
+  project: (id: string) => ["project", id] as const,
+  groups: (projectId: string) => ["groups", projectId] as const,
+  timeline: (groupId: string) => ["timeline", groupId] as const,
+  groupMembers: (groupId: string) => ["group-members", groupId] as const,
+  threads: (groupId: string) => ["threads", groupId] as const,
+  projectMembers: (id: string) => ["project-members", id] as const,
+  agents: (projectId: string) => ["agents", projectId] as const,
+  search: (projectId: string, q: string) => ["search", projectId, q] as const,
 };

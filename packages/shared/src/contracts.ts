@@ -138,3 +138,12 @@ export const DEFAULT_PROJECT_SETTINGS: ProjectSettings = {
   egressAllowlist: [],
   branchPattern: "task/{number}",
 };
+
+/** Default tool allowlist per agent role (§8.2). Agents never exceed their allowlist. */
+export const DEFAULT_AGENT_TOOLS: Record<"captain" | "sub_captain" | "dev" | "reviewer" | "tester", string[]> = {
+  captain: ["search_knowledge", "ask_project_captain", "send_message"],
+  sub_captain: ["search_knowledge", "send_message", "propose_task", "propose_assignment", "ask_question", "update_summary"],
+  dev: ["read_file", "write_file", "search_code", "run_command", "git_commit", "git_push", "open_mr", "request_review", "send_message", "search_knowledge"],
+  reviewer: ["read_file", "search_code", "run_command", "submit_review", "send_message", "search_knowledge"],
+  tester: ["read_file", "search_code", "run_command", "submit_test_result", "send_message", "search_knowledge"],
+};

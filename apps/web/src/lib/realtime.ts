@@ -68,10 +68,23 @@ class Realtime {
     this.setStatus("idle");
   }
 
+  private refs = new Map<string, number>();
+
+  /** Ref-counted: several components may watch the same topic; the last one out unsubscribes. */
   subscribe(topic: string) {
-    if (!this.topics.has(topic)) this.topics.set(topic, 0);
-    if (this.status === "open") this.ws?.send(JSON.stringify({ type: "subscribe", topic }));
+    const n = this.refs.get(topic) ?? 0;
+    this.refs.set(topic, n + 1);
+    if (n === 0) {
+      if (!this.topics.has(topic)) this.topics.set(topic, 0);
+      if (this.status === "open") this.ws?.send(JSON.stringify({ type: "subscribe", topic }));
+    }
+    let done = false;
     return () => {
+      if (done) return;
+      done = true;
+      const left = (this.refs.get(topic) ?? 1) - 1;
+      if (left > 0) return void this.refs.set(topic, left);
+      this.refs.delete(topic);
       this.topics.delete(topic);
       if (this.status === "open") this.ws?.send(JSON.stringify({ type: "unsubscribe", topic }));
     };

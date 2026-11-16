@@ -1,3 +1,4 @@
+import { DEFAULT_AGENT_TOOLS } from "@ap/shared";
 import { and, asc, eq, isNull, or } from "drizzle-orm";
 import type { Database } from "../../db";
 import { agent, chatGroup, groupMember, principal, projectMember } from "../../db/schema";
@@ -13,13 +14,7 @@ export type AgentRole = "captain" | "sub_captain" | "dev" | "reviewer" | "tester
 type AgentRow = typeof agent.$inferSelect;
 
 /** Default tool allowlists per role (§12.7 / AGENT_TOOL_ROLES enforces the hard ceiling). */
-export const DEFAULT_TOOLS: Record<AgentRole, string[]> = {
-  captain: ["search_knowledge", "ask_project_captain", "send_message"],
-  sub_captain: ["search_knowledge", "send_message", "propose_task", "propose_assignment", "ask_question", "update_summary"],
-  dev: ["read_file", "write_file", "search_code", "run_command", "git_commit", "git_push", "open_mr", "request_review", "send_message", "search_knowledge"],
-  reviewer: ["read_file", "search_code", "run_command", "submit_review", "send_message", "search_knowledge"],
-  tester: ["read_file", "search_code", "run_command", "submit_test_result", "send_message", "search_knowledge"],
-};
+export const DEFAULT_TOOLS: Record<AgentRole, string[]> = DEFAULT_AGENT_TOOLS;
 
 export interface AgentInput {
   name: string;
