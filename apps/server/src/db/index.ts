@@ -2,7 +2,6 @@ import { AsyncLocalStorage } from "node:async_hooks";
 import { drizzle, type NodePgDatabase } from "drizzle-orm/node-postgres";
 import pg from "pg";
 import { log } from "../core/logger";
-import * as schema from "./schema";
 
 export type Db = NodePgDatabase;
 /** The executor type usable for queries: either the root db or a transaction. */
@@ -31,7 +30,7 @@ export function createDatabase(url: string, max = 10): Database {
   const pool = new pg.Pool({ connectionString: url, max, idleTimeoutMillis: 30_000 });
   // TRAP-12: without an error listener an idle client killed by the server crashes the process.
   pool.on("error", (err) => log.warn("db.pool.idle_client_error", { err: err.message }));
-  const root = drizzle({ client: pool, schema }) as unknown as Db;
+  const root = drizzle({ client: pool }) as unknown as Db;
   const als = new AsyncLocalStorage<TxContext>();
 
   const runHooks = async (hooks: TxContext["afterCommit"]) => {
