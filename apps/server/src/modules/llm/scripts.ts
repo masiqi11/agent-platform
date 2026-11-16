@@ -1,4 +1,4 @@
-import type { ParsedToolCall } from "@ap/shared";
+import { asText, type ParsedToolCall } from "@ap/shared";
 
 /** Scripted model (LLM-13): deterministic, in-process, first-class for CI and demos. */
 export interface ScriptRequest {
@@ -94,6 +94,7 @@ export const demoScript: Script = (req) => {
     if (!projects.length) return { content: JSON.stringify({ answer: "", sources: [] }) };
     return { content: JSON.stringify({ answer: `相关项目：${projects.join("、")}。详见各项目摘要。`, sources: projects }) };
   }
+  if (req.purpose === "dev.turn") return devScript(req);
   if (req.purpose === "captain.turn") {
     const t = triggerText(req)
       .replace(/@\S+\s*/g, "")
@@ -138,6 +139,100 @@ export const demoScript: Script = (req) => {
     return { content: `收到。${t ? `关于「${t.slice(0, 30)}」` : ""}我会跟进，有需要建任务的地方会先发提议给大家确认。` };
   }
   return { content: "ok" };
+};
+
+/* ───────────── scripted dev agent (S5) ───────────── */
+
+interface DevState {
+  taskStatus: string;
+  branch: string;
+  base: string;
+  head: string;
+  dirty: boolean;
+  pushedSha: string | null;
+  mr: string | null;
+  ci: { status: string; sha: string } | null;
+  testCommand: string;
+}
+
+/** Tool results of the current turn, in order: `<tool_result name="x">json</tool_result>`. */
+function toolResults(req: ScriptRequest): Array<{ name: string; ok: boolean; data: Record<string, unknown> }> {
+  const out: Array<{ name: string; ok: boolean; data: Record<string, unknown> }> = [];
+  for (const m of req.messages) {
+    for (const r of m.content.matchAll(/<tool_result name="([a-z_]+)">\s*([\s\S]*?)\s*<\/tool_result>/g)) {
+      try {
+        const v = JSON.parse(r[2]!) as { ok: boolean; result?: Record<string, unknown>; error?: string };
+        out.push({ name: r[1]!, ok: v.ok, data: (v.result ?? { error: v.error }) as Record<string, unknown> });
+      } catch {
+        out.push({ name: r[1]!, ok: false, data: {} });
+      }
+    }
+  }
+  return out;
+}
+
+function devState(req: ScriptRequest): DevState | null {
+  const all = req.messages.map((m) => m.content).join("\n");
+  const m = all.match(/<state>\s*(\{[\s\S]*?\})\s*<\/state>/);
+  if (!m) return null;
+  try {
+    return JSON.parse(m[1]!) as DevState;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Plays a careful developer: reproduce → locate (FIXME marker) → fix → re-test → commit → push →
+ * MR → wait for CI → request review. Decisions come from <state> plus this turn's tool results, so a
+ * resumed session after a crash continues without repeating side effects.
+ */
+export const devScript: Script = (req) => {
+  const st = devState(req);
+  if (!st) return { content: "缺少工作区状态，无法继续。" };
+  const res = toolResults(req);
+  const last = (name: string) => [...res].reverse().find((r) => r.name === name);
+  const call = (content: string, name: string, args: Record<string, unknown>) => ({ content, toolCalls: [{ name, arguments: args }] });
+  const committed = st.head !== st.base;
+  if (st.ci && st.ci.sha === st.head && committed && st.mr) {
+    if (st.ci.status === "success" && st.taskStatus === "in_progress")
+      return call("CI 已通过，提交评审。", "request_review", {
+        summary: "修复超时：缩短调用上游网关的超时，使其小于网关自身的超时，并补充了测试。",
+        testPlan: { scope: "网关超时配置与回归测试", environment: "沙箱 + 仓库测试命令", cases: ["运行仓库全部测试", "验证超时配置小于上游网关超时"], passCriteria: "全部测试通过" },
+      });
+    if (st.ci.status === "failed") return call("CI 失败，需要人工判断。", "block_task", { reason: "CI 在当前提交上失败，自动修复未成功", needs: "人类 owner" });
+    return { content: "CI 运行中，等待结果。" };
+  }
+  if (committed && !st.dirty && st.pushedSha !== st.head) return call("推送任务分支。", "push", {});
+  if (committed && !st.dirty && !st.mr) return call("创建 MR。", "open_merge_request", { title: "" });
+  if (committed && !st.dirty) return { content: "等待 CI。" };
+  // No commit yet: reproduce, locate, fix, verify, commit.
+  const tests = res.filter((r) => r.name === "run_command");
+  const wrote = last("write_file");
+  if (!tests.length) return call("先跑测试复现问题。", "run_command", { command: st.testCommand });
+  if (!wrote) {
+    const firstTest = tests[0]!;
+    if (firstTest.data.exitCode === 0 && !st.dirty) return call("测试全部通过，无法复现。", "block_task", { reason: "按现有信息无法复现问题（测试全部通过）", needs: "人类 owner 补充复现步骤" });
+    const found = last("search_code");
+    if (!found) return call("搜索代码里标注的问题点。", "search_code", { pattern: "FIXME" });
+    const hit = asText((found.data.matches as string[] | undefined)?.[0]);
+    const path = hit.split(":")[0];
+    if (!path) return call("没有找到问题点。", "block_task", { reason: "无法定位问题代码", needs: "人类 owner" });
+    const read = last("read_file");
+    if (!read || read.data.path !== path) return call(`查看 ${path}。`, "read_file", { path });
+    const content = asText(read.data.content);
+    const lines = content.split("\n");
+    const i = lines.findIndex((l) => /FIXME/.test(l));
+    const target = lines[i]?.match(/应改为\s*([0-9_]+)/)?.[1];
+    if (i < 0 || !target) return call("问题点没有给出可执行的修复方向。", "block_task", { reason: "FIXME 未说明修复方向", needs: "人类 owner" });
+    lines[i] = lines[i]!.replace(/=\s*[0-9_]+/, `= ${target}`).replace(/\s*\/\/\s*FIXME.*$/, "");
+    return call(`修改 ${path}：超时改为 ${target}。`, "write_file", { path, content: lines.join("\n") });
+  }
+  const after = tests[tests.length - 1]!;
+  const ranAfterWrite = res.indexOf(after) > res.indexOf(wrote);
+  if (!ranAfterWrite) return call("修改后重新跑测试。", "run_command", { command: st.testCommand });
+  if (after.data.exitCode !== 0) return call("修改后测试仍失败。", "block_task", { reason: "修改后测试仍然失败", needs: "人类 owner" });
+  return call("测试通过，提交。", "commit", { message: "修复网关调用超时：超时时间小于上游网关超时\n\n复现：仓库测试失败；修复后全部通过。" });
 };
 
 /** A model that never follows instructions (TRAP-14). */

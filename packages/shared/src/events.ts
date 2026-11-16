@@ -25,6 +25,8 @@ export const EVENT_TYPES = [
   "session.interrupted",
   "session.failed",
   "workspace.created",
+  "workspace.released",
+  "session.cancelled",
   "commit.pushed",
   "mr.opened",
   "mr.updated",

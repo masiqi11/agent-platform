@@ -14,7 +14,10 @@ import { Textarea } from "@/components/ui/textarea";
 import { api, unwrap } from "@/lib/api";
 import { useModels } from "@/lib/captain";
 import { useMe } from "@/lib/me";
+import { useAgentLoad } from "@/lib/code";
 import { AGENT_ROLE_LABEL, useAgents, useProject, type Agent } from "@/lib/projects";
+import { StatusPill } from "@/components/task-bits";
+import { Link } from "@tanstack/react-router";
 import { qk, queryClient } from "@/lib/query";
 
 const STATUS: Record<string, { tone: "ok" | "attention" | "idle"; label: string }> = {
@@ -26,6 +29,7 @@ const STATUS: Record<string, { tone: "ok" | "attention" | "idle"; label: string 
 export function AgentsPage({ projectId }: { projectId: string }) {
   const project = useProject(projectId);
   const agents = useAgents(projectId);
+  const load = useAgentLoad(projectId);
   const [editing, setEditing] = useState<Agent | "new" | null>(null);
   const [disabling, setDisabling] = useState<Agent | null>(null);
   const canManage = project.data?.canManage ?? false;
@@ -62,6 +66,7 @@ export function AgentsPage({ projectId }: { projectId: string }) {
         <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-3">
           {agents.data.map((a) => {
             const st = STATUS[a.status] ?? STATUS.disabled!;
+            const ld = load.data?.find((x) => x.agentId === a.id);
             const model = typeof a.modelPolicy.primary === "string" ? a.modelPolicy.primary : "按租户默认";
             return (
               <article key={a.id} className="rounded-xl border bg-card p-4" data-testid="agent-card">
@@ -115,7 +120,28 @@ export function AgentsPage({ projectId }: { projectId: string }) {
                   <dd className="truncate" title={a.toolAllowlist.join(", ")}>
                     {a.toolAllowlist.length} 个
                   </dd>
+                  {ld && a.role !== "sub_captain" && (
+                    <>
+                      <dt className="text-muted-foreground">负载</dt>
+                      <dd className="tabular-nums" data-testid="agent-load">
+                        运行 {ld.running}/{ld.maxConcurrency}
+                        {ld.queued > 0 && <span className="text-attention"> · 排队 {ld.queued}</span>} · 在手 {ld.activeTasks}
+                      </dd>
+                    </>
+                  )}
                 </dl>
+                {ld && ld.recentTasks.length > 0 && (
+                  <ul className="mt-3 space-y-1 border-t pt-2 text-xs">
+                    {ld.recentTasks.slice(0, 3).map((rt) => (
+                      <li key={rt.id} className="flex items-center gap-2">
+                        <Link to="/projects/$projectId/tasks/$taskId" params={{ projectId, taskId: rt.id }} className="min-w-0 flex-1 truncate hover:underline">
+                          <span className="font-mono text-muted-foreground">{rt.ref}</span> {rt.title}
+                        </Link>
+                        <StatusPill status={rt.status} />
+                      </li>
+                    ))}
+                  </ul>
+                )}
               </article>
             );
           })}

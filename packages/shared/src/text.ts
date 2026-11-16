@@ -202,3 +202,6 @@ export function isSubstantive(s: string): boolean {
   if (t.length < 2) return false;
   return !/^(好的?|收到|ok|okay|谢谢|thx|thanks|哈+|嗯+|在吗|早|晚安|👍)$/i.test(t);
 }
+
+/** Coerces untyped JSON scalars (webhooks, REST bodies) to text; objects/null become "". */
+export const asText = (v: unknown): string => (typeof v === "string" ? v : typeof v === "number" || typeof v === "boolean" || typeof v === "bigint" ? String(v) : "");

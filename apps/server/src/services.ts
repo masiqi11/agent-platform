@@ -23,12 +23,22 @@ import { createApprovals } from "./modules/approvals/service";
 import { createLlm } from "./modules/llm/service";
 import { createRuntime } from "./modules/runtime/service";
 import { createCaptain } from "./modules/captain/service";
+import { createSandbox, type Sandbox } from "./modules/sandbox/service";
+import { createRepos } from "./modules/repos/service";
+import { createWorkspaces } from "./modules/workspaces/service";
+import { createDevAgent } from "./modules/devagent/service";
+import { createDelivery } from "./modules/delivery/service";
+import { createSystem } from "./modules/system/service";
 
 export interface ServiceOptions {
   /** Worker/consumer owner id (unique per process). */
   owner?: string;
   db?: Database;
   llm?: import("./modules/llm/service").LlmOptions;
+  /** Override the sandbox (tests). */
+  sandbox?: Sandbox;
+  /** fetch used for SCM REST calls (tests point it at a fake GitLab). */
+  scmFetch?: typeof fetch;
 }
 
 export function createServices(config: Config, opts: ServiceOptions = {}) {
@@ -67,6 +77,12 @@ export function createServices(config: Config, opts: ServiceOptions = {}) {
   const runtime = createRuntime({ config, db, audit, events, identity, owner });
   const captain = createCaptain({ config, db, audit, events, jobs, identity, projects, chat, tasks, proposals, inbox, llm, runtime, realtime });
   proposals.hooks.afterAccept = (ctx, p, ids) => captain.afterAccept(ctx, p, ids);
+  const sandbox = opts.sandbox ?? createSandbox(config);
+  const repos = createRepos({ config, db, audit, events, identity, projects, vault, fetch: opts.scmFetch });
+  const workspaces = createWorkspaces({ config, db, audit, events, identity, repos, sandbox, objectStore, jobs });
+  const devAgent = createDevAgent({ config, db, audit, events, jobs, identity, tasks, repos, workspaces, llm, runtime });
+  const delivery = createDelivery({ config, db, audit, events, jobs, identity, repos, workspaces });
+  const system = createSystem({ db, identity, sandbox, workspaces, jobs });
 
   const base = {
     config,
@@ -94,6 +110,12 @@ export function createServices(config: Config, opts: ServiceOptions = {}) {
     llm,
     runtime,
     captain,
+    sandbox,
+    repos,
+    workspaces,
+    devAgent,
+    delivery,
+    system,
     addRedactionValue,
   };
   return base;
