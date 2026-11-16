@@ -671,7 +671,15 @@ export const mergeQueueItem = pgTable("merge_queue_item", {
   taskId: text().notNull().unique(),
   position: bigserial({ mode: "number" }).notNull(),
   status: text().$type<"queued" | "rebasing" | "waiting_ci" | "merging" | "merged" | "failed" | "needs_human">().notNull().default("queued"),
+  /** The approved head (evidence is bound to it). */
   headSha: text(),
+  /** Head after rebasing onto the default branch; CI must pass on it before merging (FR-GIT-05). */
+  rebasedSha: text(),
+  pipelineId: text(),
+  /** When the item entered its current waiting state (pipeline / not-ready timeouts, TRAP-10). */
+  waitingSince: ts(),
+  mergeSha: text(),
+  conflictFiles: jsonb().$type<string[]>().notNull().default([]),
   attempts: integer().notNull().default(0),
   lastError: text(),
   enqueuedAt: ts().notNull().defaultNow(),

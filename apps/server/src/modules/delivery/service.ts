@@ -52,7 +52,7 @@ export function createDelivery(d: { config: Config; db: Database; audit: Audit; 
    * Convergent sync (TRAP-9): running it any number of times yields the same issue — found by
    * iid, else by marker label — with title/description/labels/state derived from the task.
    */
-  async function syncIssue(taskId: string) {
+  async function syncIssue(taskId: string, opts: { forceClosed?: boolean } = {}) {
     const [t] = await db.root.select().from(task).where(eq(task.id, taskId));
     if (!t) return { skipped: "no_task" };
     const repos = await d.repos.projectRepos(t.projectId);
@@ -62,7 +62,8 @@ export function createDelivery(d: { config: Config; db: Database; audit: Audit; 
     const key = await d.repos.projectKey(t.projectId);
     const scm = await d.repos.scmFor(r);
     const iid = t.issueRef ? Number(t.issueRef.replace(/^#/, "")) : null;
-    const terminal = t.status === "done" || t.status === "cancelled";
+    // The merge queue closes the issue as part of merging, just before the task moves to done.
+    const terminal = t.status === "done" || t.status === "cancelled" || Boolean(opts.forceClosed);
     const description = [
       t.description,
       "",
@@ -77,7 +78,12 @@ export function createDelivery(d: { config: Config; db: Database; audit: Audit; 
         marker: issueMarker(key, t.number),
         title: `${key}-${t.number} ${t.title}`,
         description,
-        labels: [`status::${STATUS_LABELS[t.status as TaskStatus]}`, `priority::${t.priority}`, `type::${t.type}`, ...(t.status === "cancelled" ? ["取消"] : [])],
+        labels: [
+          `status::${opts.forceClosed ? STATUS_LABELS.done : STATUS_LABELS[t.status as TaskStatus]}`,
+          `priority::${t.priority}`,
+          `type::${t.type}`,
+          ...(t.status === "cancelled" ? ["取消"] : []),
+        ],
         state: terminal ? "closed" : "opened",
       });
       if (t.issueRef !== issue.ref || t.issueUrl !== issue.url) {

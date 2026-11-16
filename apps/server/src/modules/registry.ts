@@ -7,6 +7,26 @@ export async function registerHandlers(s: Services): Promise<void> {
   s.consumers.register(s.captain.consumer);
   s.consumers.register(s.devAgent.consumer);
   s.consumers.register(s.delivery.consumer);
+  s.consumers.register(s.quality.consumer);
+  s.consumers.register(s.qa.consumer);
+  s.consumers.register(s.mergeQueue.consumer);
+  s.jobs.register(
+    "qa.turn",
+    async (p, { job }) => {
+      await s.qa.turn(p as Parameters<typeof s.qa.turn>[0], job.traceId ?? job.id);
+    },
+    30 * 60_000,
+  );
+  s.jobs.register(
+    "merge.process",
+    async (p) => {
+      await s.mergeQueue.process(String((p as { projectId: string }).projectId));
+    },
+    30 * 60_000,
+  );
+  s.jobs.register("ci.sha_run", async (p) => {
+    await s.workspaces.runShaPipeline(p as Parameters<typeof s.workspaces.runShaPipeline>[0]);
+  });
   s.jobs.register(
     "dev.turn",
     async (p, { job }) => {
@@ -43,6 +63,7 @@ export async function registerHandlers(s: Services): Promise<void> {
     await s.proposals.sweep();
     await s.approvals.sweep();
     await s.captain.sweep();
+    await s.mergeQueue.sweep();
   });
   await s.jobs.enqueue("flow.sweep", {}, { cron: "every:60000", dedupeKey: "cron:flow.sweep" });
   await s.jobs.enqueue("workspace.sweep", {}, { cron: "every:600000", dedupeKey: "cron:workspace.sweep", runAt: new Date(Date.now() + 60_000) });

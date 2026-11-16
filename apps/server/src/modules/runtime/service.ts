@@ -42,6 +42,10 @@ export interface TurnState {
   isTaskAssignee?: boolean;
   /** Set by a tool that ends the turn (waiting for CI, review requested, blocked …). */
   stop?: string;
+  /** Working directory for read-only file tools (reviewer / tester checkouts); defaults to the task workspace. */
+  cwd?: string;
+  /** Per-turn scratch values shared between tools (e.g. the last test log artifact). */
+  scratch?: Record<string, unknown>;
 }
 
 export const MAX_WAKE_DEPTH = 3;

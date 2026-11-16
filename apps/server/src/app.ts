@@ -18,6 +18,7 @@ import { flowRoutes } from "./routes/flow";
 import { agentRoutes } from "./routes/agents";
 import { captainRoutes } from "./routes/captain";
 import { codeRoutes } from "./routes/code";
+import { qualityRoutes } from "./routes/quality";
 import type { Services } from "./services";
 
 const CSP = [
@@ -127,6 +128,7 @@ export function createApp(s: Services) {
     .use(flowRoutes(s))
     .use(captainRoutes(s))
     .use(codeRoutes(s))
+    .use(qualityRoutes(s))
     .ws("/ws", {
       maxPayloadLength: 64 * 1024,
       idleTimeout: 120,

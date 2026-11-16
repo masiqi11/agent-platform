@@ -29,6 +29,9 @@ import { createWorkspaces } from "./modules/workspaces/service";
 import { createDevAgent } from "./modules/devagent/service";
 import { createDelivery } from "./modules/delivery/service";
 import { createSystem } from "./modules/system/service";
+import { createQuality } from "./modules/quality/service";
+import { createQa } from "./modules/qa/service";
+import { createMergeQueue } from "./modules/mergequeue/service";
 
 export interface ServiceOptions {
   /** Worker/consumer owner id (unique per process). */
@@ -83,6 +86,12 @@ export function createServices(config: Config, opts: ServiceOptions = {}) {
   const devAgent = createDevAgent({ config, db, audit, events, jobs, identity, tasks, repos, workspaces, llm, runtime });
   const delivery = createDelivery({ config, db, audit, events, jobs, identity, repos, workspaces });
   const system = createSystem({ db, identity, sandbox, workspaces, jobs });
+  const quality = createQuality({ db, audit, events, identity, tasks, approvals, repos });
+  const qa = createQa({ db, audit, events, jobs, identity, tasks, repos, workspaces, quality, llm, runtime, sandbox, objectStore });
+  const mergeQueue = createMergeQueue({ config, db, audit, events, jobs, identity, tasks, repos, workspaces, delivery, quality, inbox });
+  quality.hooks.enqueueMerge = (ctx, t, sha) => mergeQueue.enqueue(ctx, t, sha);
+  quality.hooks.dequeue = (ctx, taskId, reason) => mergeQueue.dequeue(ctx, taskId, reason);
+  mergeQueue.hooks.afterMerged = (ctx, taskId) => captain.completionSummary(ctx, taskId);
 
   const base = {
     config,
@@ -116,6 +125,9 @@ export function createServices(config: Config, opts: ServiceOptions = {}) {
     devAgent,
     delivery,
     system,
+    quality,
+    qa,
+    mergeQueue,
     addRedactionValue,
   };
   return base;

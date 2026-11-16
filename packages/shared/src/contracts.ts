@@ -160,6 +160,6 @@ export const DEFAULT_AGENT_TOOLS: Record<"captain" | "sub_captain" | "dev" | "re
     "send_message",
     "search_knowledge",
   ],
-  reviewer: ["read_file", "search_code", "run_command", "submit_review", "send_message", "search_knowledge"],
-  tester: ["read_file", "search_code", "run_command", "submit_test_result", "send_message", "search_knowledge"],
+  reviewer: ["get_task", "get_diff", "list_files", "read_file", "search_code", "get_pipeline", "submit_review", "add_task_comment", "send_message", "search_knowledge"],
+  tester: ["get_task", "list_files", "read_file", "get_pipeline", "run_tests", "submit_test_result", "add_task_comment", "send_message", "search_knowledge"],
 };
