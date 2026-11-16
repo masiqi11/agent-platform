@@ -5,7 +5,7 @@ import { join } from "node:path";
 import { and, eq, sql } from "drizzle-orm";
 import { PAYMENTS_REPO } from "../src/cli/demo-repos";
 import type { Ctx } from "../src/core/context";
-import { artifact, auditLog, event, job, localScmIssue, localScmMr, session, sessionTurn, task, workspace } from "../src/db/schema";
+import { artifact, auditLog, event, job, localScmIssue, localScmMr, proposal, session, sessionTurn, task, workspace } from "../src/db/schema";
 import { git } from "../src/modules/scm/git";
 import { createTestApp, type TestApp } from "./helpers";
 
@@ -212,6 +212,32 @@ describe("S5 dev agent — crash recovery (SES-补2)", () => {
       .from(session)
       .where(and(eq(session.scopeType, "task"), eq(session.scopeId, tk.id)));
     expect(sessions).toHaveLength(1);
+  });
+});
+
+describe("S5 main scenario steps 1–5 joined (README walkthrough)", () => {
+  test("@船长 in chat → proposal → accept → auto-assigned → dev agent → in_review", async () => {
+    const agents = (await t.req("GET", `/api/v1/projects/${projectId}/agents`, { token: owner })).body as Array<{ role: string; principalId: string }>;
+    const cap = agents.find((a) => a.role === "sub_captain")!;
+    const m = await t.req("POST", `/api/v1/groups/${groupId}/messages`, {
+      token: owner,
+      body: { body: `@[${cap.principalId}] 支付服务最近超时，请修复：从昨天下午 3 点开始，下单接口 p99 超过 30 秒，网关 5 秒就断开` },
+    });
+    expect(m.status).toBe(200);
+    await settle();
+    const [prp] = await t.s.db.root
+      .select()
+      .from(proposal)
+      .where(and(eq(proposal.groupId, groupId), eq(proposal.status, "pending")))
+      .orderBy(proposal.createdAt);
+    expect(prp).toBeTruthy();
+    const acc = await t.req("POST", `/api/v1/proposals/${prp!.id}/accept`, { token: owner });
+    expect(acc.status).toBe(200);
+    await settle();
+    const created = (prp!.resultTaskIds.length ? prp!.resultTaskIds : (await t.s.db.root.select().from(proposal).where(eq(proposal.id, prp!.id)))[0]!.resultTaskIds)[0]!;
+    const [row] = await t.s.db.root.select().from(task).where(eq(task.id, created));
+    expect(row!.assigneeAgentId).toBe(dev.id);
+    expect(row!.status).toBe("in_review");
   });
 });
 
