@@ -171,7 +171,7 @@ export function CodePanel({ task: t }: { task: TaskDetail }) {
                   <span className="font-mono text-muted-foreground">{s.id.slice(-8)}</span>
                   <span>{s.status === "running" ? "运行中" : (SESSION_STOP[s.stopReason ?? ""] ?? s.stopReason ?? s.status)}</span>
                   <span className="text-muted-foreground tabular-nums">{s.steps} 步</span>
-                  {canControl && live && (
+                  {canControl && live && !terminal && (
                     <Button size="sm" variant="ghost" className="ml-auto h-6 px-2 text-xs text-danger" onClick={() => void cancelSession(s.id)}>
                       <Square className="size-3" /> 取消会话
                     </Button>

@@ -10,7 +10,9 @@ import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Textarea } from "@/components/ui/textarea";
 import { api, unwrap } from "@/lib/api";
-import { REPO_STATUS, codeKeys, useRepos, type Repo } from "@/lib/code";
+import { MQ_STATUS, REPO_STATUS, codeKeys, qualityKeys, useMergeQueue, useRepos, type Repo } from "@/lib/code";
+import { Link } from "@tanstack/react-router";
+import { cn } from "@/lib/utils";
 import { useProject } from "@/lib/projects";
 import { queryClient } from "@/lib/query";
 
@@ -118,8 +120,64 @@ export function ReposPage({ projectId }: { projectId: string }) {
           })}
         </div>
       )}
+      <MergeQueuePanel projectId={projectId} canManage={canManage} />
       {open && <BindDialog projectId={projectId} onClose={() => setOpen(false)} onDone={() => void refresh()} />}
     </div>
+  );
+}
+
+/** The project's merge queue (FR-GIT-05): the only merger; paused when the default branch is red (GIT-补4). */
+function MergeQueuePanel({ projectId, canManage }: { projectId: string; canManage: boolean }) {
+  const q = useMergeQueue(projectId);
+  if (q.isPending) return <PageSkeleton rows={2} />;
+  if (q.error) return <ErrorState error={q.error} onRetry={() => void q.refetch()} />;
+  const { state, items } = q.data;
+  async function resume() {
+    try {
+      await unwrap(api.api.v1.projects({ id: projectId })["merge-queue"].resume.post());
+      toast.success("合并队列已恢复");
+      void queryClient.invalidateQueries({ queryKey: qualityKeys.queue(projectId) });
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : "操作失败");
+    }
+  }
+  return (
+    <section className="space-y-2" data-testid="merge-queue">
+      <h2 className="flex items-center gap-2 text-sm font-semibold">
+        合并队列
+        <span className="text-xs font-normal text-muted-foreground">变基 → CI → 合并 → 关闭 Issue；失败项转人工，不阻塞后续</span>
+      </h2>
+      {state.paused && (
+        <div className="flex items-center gap-2 rounded-lg border border-danger/40 bg-danger-soft/40 px-3 py-2 text-sm">
+          <AlertTriangle className="size-4 text-danger" />
+          已暂停{state.reason === "main_red" ? `：默认分支 ${String(state.sha ?? "").slice(0, 8)} 流水线失败，恢复绿色后自动继续` : ""}
+          {canManage && (
+            <Button size="sm" variant="outline" className="ml-auto h-7" onClick={() => void resume()}>
+              手动恢复
+            </Button>
+          )}
+        </div>
+      )}
+      {items.length === 0 ? (
+        <p className="rounded-lg border border-dashed px-3 py-3 text-sm text-muted-foreground">队列为空。门禁全部满足（评审、测试、CI，以及按策略需要的合并审批）的任务会自动入队。</p>
+      ) : (
+        <ul className="divide-y rounded-xl border bg-card text-sm">
+          {items.map((i) => {
+            const st = MQ_STATUS[i.status] ?? { label: i.status, cls: "bg-muted" };
+            return (
+              <li key={i.id} className="flex flex-wrap items-center gap-2 px-3 py-2">
+                <Link to="/projects/$projectId/tasks/$taskId" params={{ projectId, taskId: i.taskId }} className="min-w-0 flex-1 truncate hover:underline">
+                  <span className="font-mono text-muted-foreground">{i.ref}</span> {i.title}
+                </Link>
+                <span className={cn("rounded-full px-2 py-0.5 text-xs", st.cls)}>{st.label}</span>
+                <span className="font-mono text-[11px] text-muted-foreground">{(i.mergeSha ?? i.rebasedSha ?? i.headSha ?? "").slice(0, 8)}</span>
+                {i.lastError && i.status !== "merged" && <span className="w-full text-xs text-danger">{i.lastError}</span>}
+              </li>
+            );
+          })}
+        </ul>
+      )}
+    </section>
   );
 }
 

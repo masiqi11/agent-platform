@@ -153,7 +153,66 @@ export function DecisionCard({ blocks, body, canDecide }: { blocks: Record<strin
   );
 }
 
+interface Completion {
+  taskId: string;
+  ref: string;
+  title: string;
+  mrRef: string | null;
+  mrUrl: string | null;
+  mergeSha: string | null;
+  testStatus: string | null;
+  testAttempt: number | null;
+  logArtifact: string | null;
+  criteria: Array<{ text: string; verdict: string | null }>;
+  releaseId: string | null;
+}
+const VERDICT: Record<string, { label: string; cls: string }> = {
+  met: { label: "满足", cls: "text-ok" },
+  unmet: { label: "未满足", cls: "text-danger" },
+  na: { label: "不适用", cls: "text-muted-foreground" },
+};
+
+/** Captain's completion summary after the merge queue finished a task (main scenario step 9). */
+function CompletionCard({ c }: { c: Completion }) {
+  return (
+    <div className="w-full max-w-xl rounded-xl border border-ok/30 bg-ok-soft/20 p-3.5 text-sm" data-testid="completion-card">
+      <p className="flex items-center gap-1.5 font-semibold">
+        <CheckCircle2 className="size-4 text-ok" aria-hidden /> <span className="font-mono">{c.ref}</span> 已完成
+      </p>
+      <p className="mt-0.5 text-muted-foreground">{c.title}</p>
+      <dl className="mt-2.5 grid grid-cols-[72px_1fr] gap-x-2 gap-y-1">
+        <dt className="text-muted-foreground">MR</dt>
+        <dd>
+          {c.mrRef ?? "—"} 已由合并队列合并{c.mergeSha ? <span className="ml-1 font-mono text-xs text-muted-foreground">{c.mergeSha.slice(0, 8)}</span> : null}
+        </dd>
+        <dt className="text-muted-foreground">测试</dt>
+        <dd>
+          {c.testStatus === "passed" ? "通过" : (c.testStatus ?? "—")}
+          {c.testAttempt ? `（第 ${c.testAttempt} 次）` : ""}
+          {c.logArtifact ? <span className="ml-1 font-mono text-xs text-muted-foreground">{c.logArtifact}</span> : null}
+        </dd>
+        <dt className="text-muted-foreground">发布记录</dt>
+        <dd className="font-mono text-xs">{c.releaseId ?? "—"}</dd>
+      </dl>
+      {c.criteria.length > 0 && (
+        <ul className="mt-2 space-y-0.5 border-t pt-2">
+          {c.criteria.map((x) => {
+            const v = VERDICT[x.verdict ?? ""];
+            return (
+              <li key={x.text} className="flex gap-2">
+                <span className={v?.cls ?? "text-muted-foreground"}>{v?.label ?? "未标记"}</span>
+                <span>{x.text}</span>
+              </li>
+            );
+          })}
+        </ul>
+      )}
+    </div>
+  );
+}
+
 export function SummaryCardInline({ blocks, body, onOpen }: { blocks: Record<string, unknown>; body: string; onOpen?: () => void }) {
+  if (blocks.completion && typeof blocks.completion === "object") return <CompletionCard c={blocks.completion as Completion} />;
   const counts = (blocks.counts ?? {}) as Record<string, number>;
   const LABEL: Record<string, string> = { decisions: "决策", constraints: "约束", openQuestions: "未决问题", taskGraph: "任务脉络", risks: "风险" };
   return (

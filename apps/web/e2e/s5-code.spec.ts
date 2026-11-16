@@ -52,9 +52,10 @@ test("S5: dev agent fixes the demo bug to in_review; repos wizard; agent load; s
   const panel = page.getByTestId("code-panel");
   await expect(panel.getByTestId("workspace")).toContainText("task/1", { timeout: 60_000 });
   await expect(panel.getByTestId("ci-status")).toContainText("通过", { timeout: 90_000 });
-  await expect(page.getByText("评审中").first()).toBeVisible({ timeout: 30_000 });
+  // The task moves on quickly (S6 reviewer/tester agents), so check the history rather than the current status.
+  await expect(page.getByTestId("timeline")).toContainText("评审中", { timeout: 30_000 });
   await expect(panel).toContainText("!1");
-  await expect(panel).toContainText("1 个文件");
+  await expect(panel).toContainText(/\d+ 个文件/);
   await expect(panel).toContainText("补丁");
   await expect(panel).toContainText("日志");
   await expect(page.getByTestId("gate-checklist")).toContainText("CI 通过");

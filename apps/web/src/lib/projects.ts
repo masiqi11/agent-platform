@@ -35,9 +35,31 @@ export function useProjectLive(projectId: string) {
         void queryClient.invalidateQueries({ queryKey: qk.agents(projectId) });
       }
       // S5: code-path events refresh the task's code panel and the agent load.
-      if (["workspace.created", "workspace.released", "commit.pushed", "mr.opened", "pipeline.completed", "wake.requested", "issue.synced", "session.cancelled"].includes(t)) {
+      if (
+        [
+          "workspace.created",
+          "workspace.released",
+          "commit.pushed",
+          "mr.opened",
+          "pipeline.completed",
+          "wake.requested",
+          "issue.synced",
+          "session.cancelled",
+          "review.submitted",
+          "test_run.completed",
+          "gate.evaluated",
+          "merge.queued",
+          "merge.completed",
+          "merge.failed",
+          "release.recorded",
+          "approval.requested",
+          "approval.decided",
+        ].includes(t)
+      ) {
         const taskId = (f.event.payload as { taskId?: unknown }).taskId;
-        if (typeof taskId === "string") for (const k of ["task-code", "task", "task-timeline"]) void queryClient.invalidateQueries({ queryKey: [k, taskId] });
+        if (typeof taskId === "string")
+          for (const k of ["task-code", "task", "task-timeline", "task-reviews", "task-tests", "task-gate"]) void queryClient.invalidateQueries({ queryKey: [k, taskId] });
+        if (t.startsWith("merge.")) void queryClient.invalidateQueries({ queryKey: ["merge-queue", projectId] });
         void queryClient.invalidateQueries({ queryKey: ["agent-load", projectId] });
       }
       if (t === "repo.bound" || t === "repo.credential_invalid") void queryClient.invalidateQueries({ queryKey: ["repos", projectId] });

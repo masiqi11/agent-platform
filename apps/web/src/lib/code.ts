@@ -51,4 +51,32 @@ export const SESSION_STOP: Record<string, string> = {
   task_cancelled: "任务已取消",
   no_repo: "项目未绑定仓库",
   workspace_failed: "工作区创建失败",
+  review_submitted: "已提交评审结论",
+  test_submitted: "已提交测试结论",
+  checkout_failed: "检出失败",
+  tool_error: "工具执行失败",
+  head_moved: "提交已变化",
+};
+
+/* S6: reviews, test runs, merge gate, merge queue */
+export const qualityKeys = {
+  reviews: (taskId: string) => ["task-reviews", taskId] as const,
+  tests: (taskId: string) => ["task-tests", taskId] as const,
+  gate: (taskId: string) => ["task-gate", taskId] as const,
+  queue: (projectId: string) => ["merge-queue", projectId] as const,
+};
+export const useTaskReviews = (taskId: string) => useQuery({ queryKey: qualityKeys.reviews(taskId), queryFn: () => unwrap(api.api.v1.tasks({ id: taskId }).reviews.get()) });
+export const useTaskTests = (taskId: string) => useQuery({ queryKey: qualityKeys.tests(taskId), queryFn: () => unwrap(api.api.v1.tasks({ id: taskId }).tests.get()) });
+export const useTaskGate = (taskId: string) => useQuery({ queryKey: qualityKeys.gate(taskId), queryFn: () => unwrap(api.api.v1.tasks({ id: taskId }).gate.get()) });
+export const useMergeQueue = (projectId: string) =>
+  useQuery({ queryKey: qualityKeys.queue(projectId), queryFn: () => unwrap(api.api.v1.projects({ id: projectId })["merge-queue"].get()), refetchInterval: 15_000 });
+
+export const MQ_STATUS: Record<string, { label: string; cls: string }> = {
+  queued: { label: "排队中", cls: "bg-muted text-foreground" },
+  rebasing: { label: "变基中", cls: "bg-info-soft text-info" },
+  waiting_ci: { label: "等待 CI", cls: "bg-info-soft text-info" },
+  merging: { label: "合并中", cls: "bg-info-soft text-info" },
+  merged: { label: "已合并", cls: "bg-ok-soft text-ok" },
+  failed: { label: "已移出", cls: "bg-muted text-muted-foreground" },
+  needs_human: { label: "需人工处理", cls: "bg-danger-soft text-danger" },
 };
