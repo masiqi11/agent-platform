@@ -14,9 +14,9 @@ import type { Database } from "../../db";
 import { credential, project, projectMember, repo } from "../../db/schema";
 import type { Identity } from "../identity/service";
 import type { Projects } from "../projects/service";
-import { createGitLabScm } from "../scm/gitlab";
-import { createLocalBareRepo, createLocalScm, installGuard } from "../scm/local";
-import { ScmAuthError, type AccessCheck, type Scm } from "../scm/types";
+import { createGitLabScm } from "../scm/service";
+import { createLocalBareRepo, createLocalScm, installGuard } from "../scm/service";
+import { ScmAuthError, type AccessCheck, type Scm } from "../scm/service";
 
 export type RepoRow = typeof repo.$inferSelect;
 export interface RepoSettings {

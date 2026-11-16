@@ -18,8 +18,8 @@ import { agent, appUser, artifact, principal, project, repo, task, taskOwner, wo
 import type { Identity } from "../identity/service";
 import type { Repos, RepoRow } from "../repos/service";
 import type { ExecResult, Sandbox } from "../sandbox/service";
-import { git } from "../scm/git";
-import { TERMINAL_PIPELINE, type PipelineStatus } from "../scm/types";
+import { git } from "../scm/service";
+import { TERMINAL_PIPELINE, type PipelineStatus } from "../scm/service";
 
 type Jobs = ReturnType<typeof createJobs>;
 export type WorkspaceRow = typeof workspace.$inferSelect;

@@ -257,3 +257,5 @@ export function createSandbox(config: Config): Sandbox {
 export async function hostRun(argv: string[], o: { cwd: string; env?: Record<string, string>; timeoutMs?: number }) {
   return run(argv, { cwd: o.cwd, env: { PATH: process.env.PATH ?? "", HOME: process.env.HOME ?? "/tmp", LANG: "C.UTF-8", ...o.env }, timeoutMs: o.timeoutMs ?? 120_000 });
 }
+
+export { resolveInWorkspace } from "./paths";
