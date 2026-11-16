@@ -58,6 +58,17 @@ test("S2: project → realtime chat between two people → refresh keeps order �
   await box2.fill("收到，我今天下午处理回调重试，**预计 3 点前**提 MR。\n- 指数退避\n- 最多 5 次");
   await box2.press("Enter");
   await expect(page.getByTestId("message").filter({ hasText: "收到，我今天下午处理回调重试" })).toBeVisible({ timeout: 10_000 });
+  // Attachment upload through the composer.
+  await page.locator('input[type="file"]').setInputFiles({ name: "timeout-trace.txt", mimeType: "text/plain", buffer: Buffer.from("POST /callback 504 after 30000ms") });
+  await expect(page.getByText("timeout-trace.txt")).toBeVisible();
+  await box.fill("超时日志见附件");
+  await box.press("Enter");
+  await expect(
+    p2
+      .getByTestId("message")
+      .filter({ hasText: "超时日志见附件" })
+      .getByRole("button", { name: /timeout-trace\.txt/ }),
+  ).toBeVisible({ timeout: 10_000 });
   await page.getByRole("tab", { name: "成员" }).click();
   await shootBoth(page, "s2-chat");
   await page.getByRole("tab", { name: "摘要" }).click();

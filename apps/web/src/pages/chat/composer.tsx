@@ -3,8 +3,7 @@ import { useEffect, useMemo, useRef, useState, type KeyboardEvent } from "react"
 import { toast } from "sonner";
 import { PrincipalAvatar } from "@/components/agent-avatar";
 import { Button } from "@/components/ui/button";
-import { ApiError } from "@/lib/api";
-import { session } from "@/lib/session";
+import { api, unwrap } from "@/lib/api";
 import { cn } from "@/lib/utils";
 import type { Msg } from "./timeline-store";
 
@@ -120,12 +119,8 @@ export function Composer({
   async function upload(file: File) {
     setUploading(true);
     try {
-      const fd = new FormData();
-      fd.append("file", file);
-      const r = await fetch(`/api/v1/groups/${groupId}/attachments`, { method: "POST", headers: { authorization: `Bearer ${session.get()}` }, body: fd });
-      const j = (await r.json()) as { id?: string; name?: string; size?: number; message?: string };
-      if (!r.ok || !j.id) throw new ApiError(r.status, "upload", j.message ?? "上传失败");
-      setUploads((u) => [...u, { id: j.id!, name: j.name!, size: j.size! }]);
+      const j = await unwrap(api.api.v1.groups({ id: groupId }).attachments.post({ file }));
+      setUploads((u) => [...u, { id: j.id, name: j.name, size: j.size }]);
     } catch (e) {
       toast.error(e instanceof Error ? e.message : "上传失败");
     } finally {
