@@ -35,9 +35,18 @@ export interface TurnState {
   windowSeqs: Set<number>;
   wakeDepth: number;
   effects: Array<{ tool: string; ok: boolean; result?: unknown; error?: string }>;
+  /** Task-scoped turns (dev / reviewer / tester agents, S5+). */
+  taskId?: string;
+  workspaceId?: string;
+  /** Feeds the permission layer's "only the assignee" rules (task.start / task.submit_review). */
+  isTaskAssignee?: boolean;
+  /** Set by a tool that ends the turn (waiting for CI, review requested, blocked …). */
+  stop?: string;
 }
 
 export const MAX_WAKE_DEPTH = 3;
+/** Names used by earlier allowlists → registry names. */
+export const TOOL_ALIASES: Record<string, string> = { propose_assignment: "propose_assign", git_commit: "commit", git_push: "push", open_mr: "open_merge_request" };
 export const LEASE_MS = 120_000;
 
 /** Wraps untrusted text so the model treats it as data, never instructions (INV-18). */
@@ -66,10 +75,10 @@ export function createRuntime(d: { config: Config; db: Database; audit: Audit; e
       .map((n) => tools.get(n)?.spec)
       .filter((x): x is ToolSpec => Boolean(x));
   }
-  /** Allowlist ∩ role ceiling (AGENT_TOOL_ROLES). Old alias propose_assignment → propose_assign. */
+  /** Allowlist ∩ role ceiling (AGENT_TOOL_ROLES). Old aliases (pre-S5 names) map to registry names. */
   function effectiveTools(a: AgentRow): string[] {
     const ceiling = new Set(AGENT_TOOL_ROLES[a.role]);
-    return [...new Set(a.toolAllowlist.map((t) => (t === "propose_assignment" ? "propose_assign" : t)))].filter((t) => ceiling.has(t));
+    return [...new Set(a.toolAllowlist.map((t) => TOOL_ALIASES[t] ?? t))].filter((t) => ceiling.has(t));
   }
 
   /* ───────────── pause switch (§12.7 一键暂停) ───────────── */
@@ -183,7 +192,7 @@ export function createRuntime(d: { config: Config; db: Database; audit: Audit; e
   /* ───────────── tool registry: allowlist × token scope × permission (§12.7) ───────────── */
 
   async function invokeTool(ctx: Ctx, st: TurnState, call: ParsedToolCall) {
-    const name = call.name === "propose_assignment" ? "propose_assign" : call.name;
+    const name = TOOL_ALIASES[call.name] ?? call.name;
     const impl = tools.get(name);
     const deny = async (why: string) => {
       st.effects.push({ tool: name, ok: false, error: why });
@@ -194,7 +203,7 @@ export function createRuntime(d: { config: Config; db: Database; audit: Audit; e
     if (!effectiveTools(st.agent).includes(name)) return deny("不在 Agent 工具白名单");
     if (!ctx.actor.toolScope?.includes(name)) return deny("令牌未授权该工具");
     if (impl.action) {
-      const dec = await d.identity.check(ctx, impl.action, { projectId: st.projectId });
+      const dec = await d.identity.check(ctx, impl.action, { projectId: st.projectId, ...(st.isTaskAssignee !== undefined ? { isTaskAssignee: st.isTaskAssignee } : {}) });
       if (!dec.allowed) return deny(`权限不足：需要 ${dec.required}`);
     }
     try {

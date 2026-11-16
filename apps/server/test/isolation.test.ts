@@ -1,7 +1,7 @@
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { signupGrant } from "../src/auth";
 import { eq } from "drizzle-orm";
-import { decision, modelProvider, question, session, tenant } from "../src/db/schema";
+import { decision, modelProvider, question, repo, session, tenant } from "../src/db/schema";
 import { newId } from "../src/core/ids";
 import { createTestApp, type TestApp } from "./helpers";
 
@@ -16,7 +16,8 @@ let tokenB = "";
 const fixtures: Record<string, string> = {};
 
 /** Routes that are intentionally public or token-addressed (the token itself is the secret). */
-const PUBLIC = new Set(["POST /api/v1/invitations/:token/accept", "GET /api/v1/attachments/:id/raw"]);
+// Webhooks authenticate with their own per-repo secret (X-Gitlab-Token); covered by s5-scm.test.ts.
+const PUBLIC = new Set(["POST /api/v1/invitations/:token/accept", "GET /api/v1/attachments/:id/raw", "POST /api/v1/webhooks/gitlab/:id"]);
 
 /** `:id` resolves by the collection segment before it (e.g. /groups/:id → a group of tenant A). */
 function fixtureFor(path: string, param: string): string | undefined {
@@ -68,6 +69,9 @@ beforeAll(async () => {
     .values({ id: fixtures.sessions, tenantId: tA, agentId: proj.body.captainAgentId, projectId: proj.body.id, scopeType: "resident", scopeId: proj.body.mainGroupId, agentConfigVersion: 1 });
   await t.s.llm.ensureDefaults(tA);
   fixtures.providers = (await t.s.db.root.select().from(modelProvider).where(eq(modelProvider.tenantId, tA)))[0]!.id;
+  // S5: a repo of tenant A (row only; no files needed for the isolation check).
+  fixtures.repos = newId("rep");
+  await t.s.db.root.insert(repo).values({ id: fixtures.repos, tenantId: tA, projectId: proj.body.id, name: "iso", provider: "local", externalId: "iso.git", url: "/nonexistent/iso.git" });
   // Tenant B (second tenant created directly; self-host normally has one).
   const tb = newId("ten");
   await t.s.db.root.insert(tenant).values({ id: tb, name: "B", domain: "b.test" });

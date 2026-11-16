@@ -71,7 +71,7 @@ describe("S2 projects", () => {
   test("agents: create, rename keeps history label, disable needs reason, captain can't be disabled", async () => {
     const a = await t.req("POST", `/api/v1/projects/${projectId}/agents`, { token: owner, body: { name: "开发小P", role: "dev" } });
     expect(a.status).toBe(200);
-    expect(a.body.toolAllowlist).toContain("git_push");
+    expect(a.body.toolAllowlist).toContain("push"); // S5: registry names (old "git_push" still accepted as an alias)
     expect((await t.req("POST", `/api/v1/agents/${a.body.id}/status`, { token: owner, body: { status: "disabled" } })).status).toBe(400);
     expect((await t.req("POST", `/api/v1/agents/${a.body.id}/status`, { token: dev, body: { status: "paused" } })).status).toBe(403);
     const list = await t.req("GET", `/api/v1/projects/${projectId}/agents`, { token: owner });

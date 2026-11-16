@@ -49,22 +49,32 @@ export function createEvents(db: Database) {
       // Outbox ordering: holding this lock until commit makes seq order equal commit order, so a
       // consumer that has seen seq N can never later miss a smaller seq (holes are rollbacks only).
       await q.execute(sql`select pg_advisory_xact_lock(727275)`);
-      const [row] = await q
-        .insert(event)
-        .values({
-          id: newId("evt"),
-          tenantId: ctx.tenantId,
-          type: input.type,
-          aggregateType: input.aggregateType,
-          aggregateId: input.aggregateId,
-          actorPrincipalId: ctx.actor.principalId,
-          payload,
-          traceId: ctx.traceId,
-          idempotencyKey: input.idempotencyKey ?? null,
-        })
-        .returning();
-      await q.execute(sql`select pg_notify('ap_events', ${String(row!.seq)})`);
-      return row!;
+      const values = {
+        id: newId("evt"),
+        tenantId: ctx.tenantId,
+        type: input.type,
+        aggregateType: input.aggregateType,
+        aggregateId: input.aggregateId,
+        actorPrincipalId: ctx.actor.principalId,
+        payload,
+        traceId: ctx.traceId,
+        idempotencyKey: input.idempotencyKey ?? null,
+      };
+      // With an idempotency key a repeated emit (retry / resumed session, INV-16) is a no-op that
+      // returns the original event instead of aborting the surrounding transaction.
+      const [row] = input.idempotencyKey
+        ? await q
+            .insert(event)
+            .values(values)
+            .onConflictDoNothing({ target: event.idempotencyKey, where: sql`idempotency_key is not null` })
+            .returning()
+        : await q.insert(event).values(values).returning();
+      if (!row) {
+        const [prev] = await q.select().from(event).where(eq(event.idempotencyKey, input.idempotencyKey!));
+        return prev!;
+      }
+      await q.execute(sql`select pg_notify('ap_events', ${String(row.seq)})`);
+      return row;
     });
   }
   return { emit };
