@@ -431,12 +431,17 @@ export const searchFirstScript: Script = (req) => {
 };
 
 /**
- * A reviewer that keeps reading as long as it is allowed (like thorough real models) and only
- * concludes when submit_review is the sole tool offered: exercises the last-step rule.
+ * A reviewer that keeps reading as long as it is allowed (like thorough real models), concludes only
+ * when submit_review is the sole tool offered, and gets that first call wrong: exercises the
+ * last-step rule and its one correction step.
  */
 export const explorerScript: Script = (req) => {
   if (req.purpose !== "review.turn") return demoScript(req);
-  if (req.toolNames.length === 1 && req.toolNames[0] === "submit_review") return reviewerScript(req);
+  if (req.toolNames.length === 1 && req.toolNames[0] === "submit_review") {
+    // First forced attempt is malformed (no verdict), like a real model's mangled call; it corrects after the error.
+    const rejected = req.messages.some((m) => /<tool_result name="submit_review">\{"ok":false/.test(m.content));
+    return rejected ? reviewerScript(req) : { content: "", toolCalls: [{ name: "submit_review", arguments: { summary: "看起来不错" } }] };
+  }
   return { content: "再看一下 README。", toolCalls: [{ name: "read_file", arguments: { path: "README.md" } }] };
 };
 

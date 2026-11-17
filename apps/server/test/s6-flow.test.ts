@@ -293,7 +293,7 @@ describe("S6 gates and evidence", () => {
     expect((await load(id)).status).toBe("done");
   });
 
-  test("a reviewer that would keep reading forever is made to conclude on its last step", async () => {
+  test("a reviewer that would keep reading forever concludes on its last step, with one correction after a rejected call", async () => {
     await setPolicy("auto");
     await t.s.db.root
       .update(agent)
@@ -302,7 +302,7 @@ describe("S6 gates and evidence", () => {
     const id = await manualTask("评审步数上限", { "test/limit.test.ts": 'import { expect, test } from "bun:test";\ntest("ok", () => expect(1).toBe(1));\n' });
     await settle();
     const [rv] = await t.s.db.root.select().from(review).where(eq(review.taskId, id));
-    expect(rv?.verdict).toBe("approved"); // concluded on step 3 instead of running out of steps
+    expect(rv?.verdict).toBe("approved"); // step 3: forced, rejected (no verdict); step 4: corrected
     expect((await load(id)).status).not.toBe("in_review");
     const [ses] = await t.s.db.root
       .select()
