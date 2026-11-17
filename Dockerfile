@@ -9,11 +9,15 @@ RUN bun install --frozen-lockfile
 COPY . .
 RUN cd apps/web && bun x vite build
 
+# Docker CLI only (no daemon): the docker sandbox talks to the host's runtime (see docs/deploy.md).
+FROM docker:29.0.4-cli AS dockercli
+
 FROM oven/bun:1.4.4-slim AS runtime
 WORKDIR /app
 ENV NODE_ENV=production ROLE=all PORT=3000 WEB_DIST=/app/apps/web/dist DATA_DIR=/data
 RUN apt-get update && apt-get install -y --no-install-recommends git ca-certificates && rm -rf /var/lib/apt/lists/* \
   && mkdir -p /data && chown -R bun:bun /data
+COPY --from=dockercli /usr/local/bin/docker /usr/local/bin/docker
 COPY --from=build --chown=bun:bun /app/node_modules ./node_modules
 COPY --from=build --chown=bun:bun /app/package.json ./
 COPY --from=build --chown=bun:bun /app/packages ./packages

@@ -119,7 +119,9 @@ export function createTasks(d: TaskDeps) {
 
   async function ownersOf(taskIds: string[]) {
     if (!taskIds.length) return [];
-    return db.root
+    // Ambient executor: also called inside transactions (a second pool connection there deadlocks under load).
+    return db
+      .q()
       .select({ taskId: taskOwner.taskId, principalId: taskOwner.principalId, role: taskOwner.role, name: principal.displayName, kind: principal.kind })
       .from(taskOwner)
       .innerJoin(principal, eq(principal.id, taskOwner.principalId))

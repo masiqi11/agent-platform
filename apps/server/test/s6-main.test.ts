@@ -210,4 +210,30 @@ describe("S6 main scenario §22.2 — scripted model + local SCM (CI)", () => {
     const mainRuns = (await t.s.db.root.select().from(event).where(eq(event.type, "pipeline.completed"))).filter((e) => (e.payload as { purpose?: string }).purpose === "main");
     expect(mainRuns.map((e) => (e.payload as { status: string }).status)).toEqual(["success"]);
   });
+
+  test("§1.3: docs/metrics.sql computes every success metric from the database after the main scenario", async () => {
+    const { readFileSync } = await import("node:fs");
+    const tenantId = ((await t.s.db.root.execute(sql`select id from tenant limit 1`)) as unknown as { rows: Array<{ id: string }> }).rows[0]!.id;
+    const text = readFileSync(new URL("../../../docs/metrics.sql", import.meta.url), "utf8")
+      .split("\n")
+      .filter((l) => !l.startsWith("\\echo") && !l.trimStart().startsWith("--"))
+      .join("\n")
+      .replaceAll(":tenant", `'${tenantId}'`)
+      .replaceAll(":since", "'2000-01-01'");
+    const results = [];
+    for (const stmt of text
+      .split(";")
+      .map((x) => x.trim())
+      .filter(Boolean))
+      results.push(((await t.s.db.root.execute(sql.raw(stmt))) as unknown as { rows: Array<Record<string, unknown>> }).rows[0]!);
+    expect(results).toHaveLength(7);
+    const [decision, toMr, firstPass, interventions, summaries, , cost] = results as Array<Record<string, number | string | boolean | null>>;
+    expect(Number(decision!.tasks)).toBe(1); // the task came from the accepted proposal
+    expect(Number(toMr!.tasks)).toBe(1);
+    expect(Number(firstPass!.tasks)).toBe(1);
+    expect(Number(interventions!.merged_tasks)).toBe(1);
+    expect(Number(summaries!.corrected_versions)).toBe(0); // nobody corrected a summary here
+    expect(Number(cost!.tasks)).toBe(1);
+    for (const r of results.slice(0, 6)) expect(r.target_met).toBe(true);
+  });
 });
