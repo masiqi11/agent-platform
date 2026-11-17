@@ -1,5 +1,5 @@
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
-import { eq } from "drizzle-orm";
+import { and, desc, eq } from "drizzle-orm";
 import type { Ctx } from "../src/core/context";
 import { agent, approval, auditLog, event, inboxItem, mergeQueueItem, repo, review, task, tenant, testRun, workspace } from "../src/db/schema";
 import { createTestApp, type TestApp } from "./helpers";
@@ -348,6 +348,22 @@ describe("S3 approvals & escalation", () => {
     const r = await t.req("POST", `/api/v1/approvals/${req.body.id}/decide`, { token: owner, body: { decision: "approve" } });
     expect(r.status).toBe(409);
     expect((await t.req("GET", `/api/v1/approvals/${req.body.id}`, { token: owner })).body.status).toBe("invalidated");
+  });
+
+  test("INV-13: a whole report as the transition reason still transitions; the event carries an excerpt", async () => {
+    const a = await newTask();
+    await transition(a.id, "ready");
+    await setFacts(a.id, { ws: true });
+    await transition(a.id, "in_progress");
+    const long = "测试未通过：".padEnd(1500, "详细证据与复现步骤。");
+    expect((await transition(a.id, "blocked", { reason: long, needs: "王负责人" })).status).toBe(200);
+    const [ev] = await t.s.db.root
+      .select()
+      .from(event)
+      .where(and(eq(event.aggregateId, a.id), eq(event.type, "task.status_changed")))
+      .orderBy(desc(event.seq))
+      .limit(1);
+    expect(String((ev!.payload as { reason?: string }).reason).length).toBeLessThanOrEqual(120);
   });
 
   test("FR-NTF-03 + TSK-补10: blocked tasks escalate by working hours (owner → maintainer → admin)", async () => {

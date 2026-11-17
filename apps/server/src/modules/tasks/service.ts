@@ -35,7 +35,7 @@ import {
 import type { Audit } from "../../core/audit";
 import type { Ctx } from "../../core/context";
 import { DomainError, conflict, forbidden, invalid, notFound } from "../../core/errors";
-import type { Events } from "../../core/events";
+import { excerpt, type Events } from "../../core/events";
 import { newId } from "../../core/ids";
 import type { Identity } from "../identity/service";
 import type { Projects } from "../projects/service";
@@ -506,7 +506,9 @@ export function createTasks(d: TaskDeps) {
           from,
           to: finalTo,
           actorKind: ctx.actor.kind,
-          reason: input.reason ?? null,
+          // INV-13: an excerpt only — a failed test's reason is a whole report (found live in S8-7,
+          // where the overlong payload made submit_test_result fail every time). Full text: audit + task.
+          reason: excerpt(input.reason),
           policy,
           inboxPrincipalIds: owners.filter((o) => o !== ctx.actor.principalId),
         },
