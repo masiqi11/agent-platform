@@ -27,6 +27,10 @@ const groupCallback = {
   msgtype: "text",
 };
 
+/** Fake-fetch helpers: the adapter only passes string URLs and JSON string bodies. */
+const urlOf = (input: RequestInfo | URL) => (typeof input === "string" ? input : input instanceof URL ? input.href : input.url);
+const jsonBody = (init?: RequestInit) => (typeof init?.body === "string" ? JSON.parse(init.body) : null);
+
 describe("S9 DingTalk — wire format", () => {
   test("group text @bot → message event with staffId, reply webhook and title", () => {
     const ev = parseBotMessage(groupCallback)!;
@@ -75,8 +79,8 @@ describe("S9 DingTalk — OpenAPI", () => {
   test("token is fetched once and cached; group send uses markdown with the robot code", async () => {
     const calls: Array<{ url: string; headers: Record<string, string>; body: any }> = [];
     const fake = (async (input: RequestInfo | URL, init?: RequestInit) => {
-      const url = String(input);
-      calls.push({ url, headers: Object.fromEntries(new Headers(init?.headers).entries()), body: init?.body ? JSON.parse(String(init.body)) : null });
+      const url = urlOf(input);
+      calls.push({ url, headers: Object.fromEntries(new Headers(init?.headers).entries()), body: jsonBody(init) });
       if (url.endsWith("/v1.0/oauth2/accessToken")) return Response.json({ accessToken: "tok-1", expireIn: 7200 });
       if (url.endsWith("/v1.0/robot/groupMessages/send")) return Response.json({ processQueryKey: `pqk-${calls.length}` });
       return new Response("{}", { status: 404 });
@@ -94,7 +98,7 @@ describe("S9 DingTalk — OpenAPI", () => {
   test("a removed robot surfaces as a lifecycle error; reply prefers the session webhook", async () => {
     const urls: string[] = [];
     const fake = (async (input: RequestInfo | URL) => {
-      const url = String(input);
+      const url = urlOf(input);
       urls.push(url);
       if (url.endsWith("/accessToken")) return Response.json({ accessToken: "tok", expireIn: 7200 });
       if (url.includes("sendBySession")) return Response.json({ errcode: 0 });
@@ -136,8 +140,8 @@ describe("S9 DingTalk — Stream session against a fake gateway", () => {
   test("ping is answered, a bot callback becomes an event and is acked by messageId, disconnect ends the session", async () => {
     const opened: any[] = [];
     const fake = (async (input: RequestInfo | URL, init?: RequestInit) => {
-      if (String(input).endsWith("/v1.0/gateway/connections/open")) {
-        opened.push(JSON.parse(String(init?.body)));
+      if (urlOf(input).endsWith("/v1.0/gateway/connections/open")) {
+        opened.push(jsonBody(init));
         return Response.json({ endpoint: `ws://127.0.0.1:${server.port}/connect`, ticket: "tkt-1" });
       }
       return new Response("{}", { status: 404 });

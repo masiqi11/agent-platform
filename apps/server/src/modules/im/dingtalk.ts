@@ -9,6 +9,9 @@ import { ImLifecycleError, ImThrottled, type ImAdapter, type ImAttachmentRef, ty
  */
 
 const API = "https://api.dingtalk.com";
+/** Payload fields are untyped JSON: only strings count. */
+const asText = (v: unknown) => (typeof v === "string" ? v : "");
+
 export const BOT_TOPIC = "/v1.0/im/bot/messages/get";
 
 export interface DingTalkOptions {
@@ -42,7 +45,7 @@ export function parseBotMessage(raw: Record<string, unknown>): Extract<ImInbound
   const content = (raw.content ?? {}) as Record<string, unknown>;
   let text = "";
   const attachments: ImAttachmentRef[] = [];
-  if (type === "text") text = String((raw.text as { content?: unknown } | undefined)?.content ?? "");
+  if (type === "text") text = asText((raw.text as { content?: unknown } | undefined)?.content);
   else if (type === "richText") {
     for (const part of (content.richText as Array<Record<string, unknown>> | undefined) ?? []) {
       if (typeof part.text === "string") text += part.text;
@@ -51,7 +54,7 @@ export function parseBotMessage(raw: Record<string, unknown>): Extract<ImInbound
   } else if (type === "picture") {
     if (typeof content.downloadCode === "string") attachments.push({ ref: content.downloadCode, name: "image.png", mime: "image/png" });
   } else if (type === "file") {
-    if (typeof content.downloadCode === "string") attachments.push({ ref: content.downloadCode, name: String(content.fileName ?? "file") });
+    if (typeof content.downloadCode === "string") attachments.push({ ref: content.downloadCode, name: asText(content.fileName) || "file" });
   } else text = `[${type} 消息，平台暂不支持，请在钉钉查看]`;
   const group = s("conversationType") !== "1";
   const expires = Number(raw.sessionWebhookExpiredTime ?? 0);
@@ -77,7 +80,7 @@ export function parseBotMessage(raw: Record<string, unknown>): Extract<ImInbound
 /** Org/chat events that end a binding (IM-补3). Unknown events are ignored. */
 export function parseLifecycleEvent(headers: Record<string, string>, data: Record<string, unknown>): Extract<ImInbound, { kind: "lifecycle" }> | null {
   const type = headers.eventType ?? "";
-  const chatId = String(data.openConversationId ?? data.OpenConversationId ?? data.conversationId ?? "") || undefined;
+  const chatId = asText(data.openConversationId) || asText(data.OpenConversationId) || asText(data.conversationId) || undefined;
   if (type === "chat_disband") return chatId ? { kind: "lifecycle", provider: "dingtalk", chatId, event: "chat_disbanded" } : null;
   if (type === "im_robot_remove" || type === "chat_remove_robot") return chatId ? { kind: "lifecycle", provider: "dingtalk", chatId, event: "bot_removed" } : null;
   if (type === "org_micro_app_remove" || type === "org_micro_app_stop" || type === "app_auth_revoke") return { kind: "lifecycle", provider: "dingtalk", event: "app_revoked" };

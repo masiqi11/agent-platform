@@ -791,7 +791,8 @@ export function createIm(d: ImDeps, adapters: ImAdapter[] = []) {
     if (by !== m.author && m.author !== (await externalPrincipal(m.tenantId, ev.provider, ev.senderId))) return "not_author";
     const sys = await d.identity.systemCtx(m.tenantId, traceId);
     // Keep the captain address the gateway added on the way in (at_only).
-    const lead = String((m.blocks as { im?: { lead?: unknown } } | null)?.im?.lead ?? "");
+    const rawLead = (m.blocks as { im?: { lead?: unknown } } | null)?.im?.lead;
+    const lead = typeof rawLead === "string" ? rawLead : "";
     const text = ev.kind === "edit" ? ev.text.replace(/^\s+/, "") : undefined;
     const r = await d.chat.syncExternal(sys, {
       source: ev.provider,
