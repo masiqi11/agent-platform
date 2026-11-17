@@ -27,7 +27,7 @@ export interface Config {
   s3: { endpoint: string; region: string; bucket: string; accessKey: string; secretKey: string } | null;
   maxUploadMb: number;
   sandbox: { kind: "process" | "docker"; image?: string; runtime?: string; timeoutMs: number };
-  llmBootstrap: { baseUrl: string; apiKey?: string; model: string; embeddingModel?: string } | null;
+  llmBootstrap: { baseUrl: string; apiKey?: string; model: string; embeddingModel?: string; apis?: Array<"chat" | "responses" | "messages"> } | null;
   demoMode: boolean;
   agentsPaused: boolean;
   dingtalk: { clientId: string; clientSecret: string; robotCode?: string } | null;
@@ -83,7 +83,20 @@ export function createConfig(env: Env, cwd = process.cwd()): Config {
         : null,
     maxUploadMb: env.MAX_UPLOAD_MB,
     sandbox: { kind: env.SANDBOX ?? (isProd ? "docker" : "process"), image: env.SANDBOX_IMAGE, runtime: env.SANDBOX_RUNTIME, timeoutMs: env.SANDBOX_TIMEOUT_MS },
-    llmBootstrap: env.LLM_BASE_URL && env.LLM_MODEL ? { baseUrl: env.LLM_BASE_URL, apiKey: env.LLM_API_KEY, model: env.LLM_MODEL, embeddingModel: env.LLM_EMBEDDING_MODEL } : null,
+    llmBootstrap:
+      env.LLM_BASE_URL && env.LLM_MODEL
+        ? {
+            baseUrl: env.LLM_BASE_URL,
+            apiKey: env.LLM_API_KEY,
+            model: env.LLM_MODEL,
+            embeddingModel: env.LLM_EMBEDDING_MODEL,
+            apis: env.LLM_APIS
+              ? (env.LLM_APIS.split(",")
+                  .map((x) => x.trim())
+                  .filter((x) => x === "chat" || x === "responses" || x === "messages") as Array<"chat" | "responses" | "messages">)
+              : undefined,
+          }
+        : null,
     demoMode: env.DEMO_MODE,
     agentsPaused: env.AGENTS_PAUSED,
     dingtalk: env.DINGTALK_CLIENT_ID && env.DINGTALK_CLIENT_SECRET ? { clientId: env.DINGTALK_CLIENT_ID, clientSecret: env.DINGTALK_CLIENT_SECRET, robotCode: env.DINGTALK_ROBOT_CODE } : null,

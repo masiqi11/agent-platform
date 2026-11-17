@@ -54,6 +54,8 @@ export const serverSchema = {
   LLM_API_KEY: z.string().optional(),
   LLM_MODEL: z.string().optional(),
   LLM_EMBEDDING_MODEL: z.string().optional(),
+  /** Wire APIs the bootstrap endpoint accepts for the harness proxy, e.g. "chat,responses,messages". */
+  LLM_APIS: z.string().optional(),
   DEMO_MODE: bool.default(false),
   AGENTS_PAUSED: bool.default(false),
   DINGTALK_CLIENT_ID: z.string().optional(),

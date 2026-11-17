@@ -9,7 +9,7 @@ import { newId } from "../../core/ids";
 import { log, redactValue } from "../../core/logger";
 import type { Config } from "../../config";
 import type { Database } from "../../db";
-import { budget, credential, llmCall, model, modelProvider, project, tenant } from "../../db/schema";
+import { agent, budget, credential, llmCall, model, modelProvider, project, session, tenant } from "../../db/schema";
 import type { Identity } from "../identity/service";
 import { SCRIPTS, type ScriptReply } from "./scripts";
 
@@ -194,6 +194,59 @@ export interface LlmOptions {
  * breaker, structured output with one repair pass, text tool-call parsing, atomic budget
  * reserve/settle, metering, outbound redaction and data-egress control.
  */
+/** Wire APIs the harness proxy serves (ADR-0010). */
+export type HarnessApi = "chat" | "responses" | "messages";
+
+const supportsApi = (p: ProviderRow, api: HarnessApi) => (p.dialect === "ollama" ? api === "chat" : (p.apis ?? ["chat"]).includes(api));
+
+/** Upstream URL for an API on a provider: OpenAI-style bases end in /v1; Ollama serves /v1 itself. */
+export function upstreamUrl(p: Pick<ProviderRow, "baseUrl" | "dialect">, api: HarnessApi): string {
+  const base = p.baseUrl.replace(/\/$/, "");
+  const v1 = p.dialect === "ollama" ? `${base}/v1` : base.endsWith("/v1") ? base : `${base}/v1`;
+  return `${v1}/${api === "chat" ? "chat/completions" : api}`;
+}
+
+function upstreamHeaders(api: HarnessApi, key: string | undefined, incoming: Headers): Record<string, string> {
+  const h: Record<string, string> = { "content-type": "application/json" };
+  if (api === "messages") {
+    h["anthropic-version"] = incoming.get("anthropic-version") ?? "2023-06-01";
+    const beta = incoming.get("anthropic-beta");
+    if (beta) h["anthropic-beta"] = beta;
+    if (key) h["x-api-key"] = key;
+  } else if (key) h.authorization = `Bearer ${key}`;
+  const accept = incoming.get("accept");
+  if (accept) h.accept = accept;
+  return h;
+}
+
+/** Usage from a response body or one streamed event, per API. */
+export function usageOf(api: HarnessApi, j: Record<string, unknown>): { tin?: number; tout?: number } {
+  const num = (v: unknown) => (typeof v === "number" ? v : undefined);
+  if (api === "chat") {
+    const u = j.usage as Record<string, unknown> | undefined;
+    return u ? { tin: num(u.prompt_tokens), tout: num(u.completion_tokens) } : {};
+  }
+  if (api === "responses") {
+    const u = ((j.response as Record<string, unknown> | undefined)?.usage ?? j.usage) as Record<string, unknown> | undefined;
+    return u ? { tin: num(u.input_tokens), tout: num(u.output_tokens) } : {};
+  }
+  // Anthropic: message_start carries input usage, message_delta the running output count.
+  const u = ((j.message as Record<string, unknown> | undefined)?.usage ?? j.usage) as Record<string, unknown> | undefined;
+  if (!u) return {};
+  const tin = num(u.input_tokens);
+  return { tin: tin === undefined ? undefined : tin + (num(u.cache_read_input_tokens) ?? 0) + (num(u.cache_creation_input_tokens) ?? 0), tout: num(u.output_tokens) };
+}
+
+/** Outbound redaction (LLM-10) over every string in a request body. */
+function redactDeep(v: unknown): unknown {
+  if (typeof v === "string") return redactValue(v);
+  if (Array.isArray(v)) return v.map(redactDeep);
+  if (v && typeof v === "object") return Object.fromEntries(Object.entries(v).map(([k, x]) => [k, redactDeep(x)]));
+  return v;
+}
+
+const jsonError = (status: number, message: string) => Response.json({ error: { type: "platform_proxy_error", message } }, { status });
+
 export function createLlm(d: { config: Config; db: Database; audit: Audit; events: Events; identity: Identity; vault: Vault }, opts: LlmOptions = {}) {
   const { db } = d;
   const timeoutMs = opts.timeoutMs ?? Number(process.env.LLM_TIMEOUT_MS ?? 180_000);
@@ -262,6 +315,7 @@ export function createLlm(d: { config: Config; db: Database; audit: Audit; event
         kind: "openai_compatible",
         dialect: ollama ? "ollama" : "openai",
         isExternal: !local,
+        apis: boot.apis?.length ? boot.apis : ["chat"],
         credentialId,
       });
       // ADR-0003: gemma4:e2b think:false — tools + JSON ok, 8k context.
@@ -782,6 +836,7 @@ export function createLlm(d: { config: Config; db: Database; audit: Audit; event
         kind: p.kind,
         dialect: p.dialect,
         isExternal: p.isExternal,
+        apis: p.apis,
         status: p.status,
         circuit: p.circuitState.state,
         keyLast4: creds.find((c) => c.id === p.credentialId)?.last4 ?? null,
@@ -812,6 +867,8 @@ export function createLlm(d: { config: Config; db: Database; audit: Audit; event
       dialect: "openai" | "ollama";
       isExternal: boolean;
       apiKey?: string;
+      /** Wire APIs the endpoint accepts (harness proxy); defaults to chat only. */
+      apis?: Array<"chat" | "responses" | "messages">;
       models: Array<{
         name: string;
         contextWindow?: number;
@@ -848,6 +905,7 @@ export function createLlm(d: { config: Config; db: Database; audit: Audit; event
         kind: "openai_compatible",
         dialect: input.dialect,
         isExternal: input.isExternal,
+        apis: input.apis?.length ? [...new Set(input.apis)] : ["chat"],
         credentialId,
       });
       for (const m of input.models)
@@ -1040,7 +1098,147 @@ export function createLlm(d: { config: Config; db: Database; audit: Audit; event
     }
   }
 
+  /* ───────────── harness model proxy (ADR-0010) ───────────── */
+
+  /** Proxy entry for an agent session token: the session gives budget scope, the agent its model policy. */
+  async function proxyForAgent(ctx: Ctx, api: HarnessApi, body: Record<string, unknown>, headers: Headers): Promise<Response> {
+    if (ctx.actor.kind !== "agent" || !ctx.actor.sessionId || !ctx.actor.agentId) return jsonError(403, "只接受 Agent 会话令牌");
+    const [ses] = await db.root.select().from(session).where(eq(session.id, ctx.actor.sessionId));
+    if (!ses || ses.agentId !== ctx.actor.agentId || !["running", "queued"].includes(ses.status)) return jsonError(403, "会话不存在或已结束");
+    const [a] = await db.root.select().from(agent).where(eq(agent.id, ctx.actor.agentId));
+    if (!a || a.status !== "active") return jsonError(403, "Agent 未启用");
+    return proxy(ctx, api, {
+      body,
+      headers,
+      policy: a.modelPolicy,
+      purpose: `harness.${a.role}`,
+      scope: { projectId: ses.projectId ?? undefined, taskId: ses.scopeType === "task" ? ses.scopeId : undefined, sessionId: ses.id, agentId: a.id },
+    });
+  }
+
+  /**
+   * Model proxy for external harnesses (Claude Code / Codex / OpenCode / pi). The harness speaks its
+   * own wire API with a session token; the platform resolves the agent's model, checks egress and
+   * the circuit, reserves budget, redacts, forwards to a provider that accepts the same API, and
+   * meters from the upstream's own usage (streaming included). The real key never leaves.
+   */
+  async function proxy(
+    ctx: Ctx,
+    api: HarnessApi,
+    input: { body: Record<string, unknown>; headers: Headers; scope: LlmScope; purpose: string; policy?: CompleteInput["modelPolicy"] },
+  ): Promise<Response> {
+    await ensureDefaults(ctx.tenantId);
+    const cands = (await candidates(ctx.tenantId, input.policy)).filter((c) => c.p.kind === "openai_compatible" && supportsApi(c.p, api));
+    if (!cands.length) return jsonError(400, `没有可用的模型：需要支持 ${api} 接口的供应商`);
+    const stream = input.body.stream === true;
+    const body = redactDeep(input.body) as Record<string, unknown>;
+    if (stream && api === "chat") body.stream_options = { ...(body.stream_options as object), include_usage: true };
+    const estIn = estimateTokens(JSON.stringify(body));
+    const estOut = Number(body.max_tokens ?? body.max_output_tokens ?? 4096);
+    const reasons: string[] = [];
+    for (const { m, p } of cands) {
+      const denied = await egressAllowed(input.scope.projectId, p);
+      if (denied) {
+        reasons.push(`${m.name}: ${denied}`);
+        continue;
+      }
+      if (circuitOpen(p)) {
+        reasons.push(`${m.name}: 熔断中`);
+        continue;
+      }
+      const price = (tin: number, tout: number) => ((m.inputPrice ?? 0) * tin + (m.outputPrice ?? 0) * tout) / 1_000_000;
+      let reserved: string[];
+      try {
+        reserved = await reserve(ctx, input.scope, estIn + estOut, price(estIn, estOut));
+      } catch (e) {
+        if (e instanceof BudgetExceeded) return jsonError(429, `预算已用尽（${e.message}）`);
+        throw e;
+      }
+      const key = await apiKeyFor(p);
+      const t0 = Date.now();
+      const meta = { purpose: input.purpose, promptVersion: "harness@1", scope: input.scope, messages: [] } as CompleteInput;
+      const settle = async (tin: number, tout: number, status: "ok" | "error", error?: string) => {
+        for (const id of reserved) await release(id, estIn + estOut, price(estIn, estOut), tin + tout, price(tin, tout));
+        await meter(ctx, meta, {
+          model: m.name,
+          providerId: p.id,
+          tokensIn: tin,
+          tokensOut: tout,
+          cost: price(tin, tout),
+          latencyMs: Date.now() - t0,
+          status,
+          ...(error ? { error } : {}),
+          toolMode: "harness",
+          dataClasses: p.isExternal ? ["code", "task"] : [],
+        });
+      };
+      let res: Response;
+      try {
+        res = await doFetch(upstreamUrl(p, api), {
+          method: "POST",
+          headers: upstreamHeaders(api, key, input.headers),
+          body: JSON.stringify({ ...body, model: m.name }),
+          signal: AbortSignal.timeout(timeoutMs),
+        });
+      } catch (e) {
+        await recordOutcome(p, false);
+        await settle(0, 0, "error", redactValue((e as Error).message).slice(0, 300));
+        reasons.push(`${m.name}: ${(e as Error).message}`);
+        continue; // nothing reached the harness yet: the next candidate may serve it
+      }
+      if (!res.ok) {
+        const text = await res.text();
+        await recordOutcome(p, res.status < 500);
+        await settle(0, 0, "error", `HTTP ${res.status}: ${redactValue(text).slice(0, 300)}`);
+        if (res.status >= 500 && cands.at(-1)!.m.id !== m.id) {
+          reasons.push(`${m.name}: HTTP ${res.status}`);
+          continue;
+        }
+        return new Response(text, { status: res.status, headers: { "content-type": res.headers.get("content-type") ?? "application/json" } });
+      }
+      await recordOutcome(p, true);
+      if (!stream || !res.body) {
+        const json = (await res.json()) as Record<string, unknown>;
+        const u = usageOf(api, json);
+        await settle(u.tin ?? estIn, u.tout ?? 0, "ok");
+        return Response.json(json);
+      }
+      // Streaming: pass bytes through untouched, read usage from the SSE events on the way.
+      const usage: { tin?: number; tout?: number } = {};
+      const dec = new TextDecoder();
+      let buf = "";
+      const tap = new TransformStream<Uint8Array, Uint8Array>({
+        transform(chunk, ctl) {
+          ctl.enqueue(chunk);
+          buf += dec.decode(chunk, { stream: true });
+          let i: number;
+          while ((i = buf.indexOf("\n")) >= 0) {
+            const line = buf.slice(0, i).trim();
+            buf = buf.slice(i + 1);
+            if (!line.startsWith("data:")) continue;
+            const data = line.slice(5).trim();
+            if (!data || data === "[DONE]") continue;
+            try {
+              const u = usageOf(api, JSON.parse(data) as Record<string, unknown>);
+              if (u.tin !== undefined) usage.tin = u.tin;
+              if (u.tout !== undefined) usage.tout = u.tout;
+            } catch {
+              /* not JSON: ignore */
+            }
+          }
+        },
+        async flush() {
+          await settle(usage.tin ?? estIn, usage.tout ?? 0, "ok").catch((e) => log.warn("llm.proxy_settle_failed", { err: (e as Error).message }));
+        },
+      });
+      return new Response(res.body.pipeThrough(tap), { status: 200, headers: { "content-type": res.headers.get("content-type") ?? "text/event-stream", "cache-control": "no-cache" } });
+    }
+    return jsonError(503, `模型不可用：${reasons.join("；")}`);
+  }
+
   return {
+    proxy,
+    proxyForAgent,
     embed,
     embeddingModelName,
     setEmbeddingModel,
