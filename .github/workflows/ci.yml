@@ -20,6 +20,8 @@ jobs:
       - uses: oven-sh/setup-bun@v2
         with: { bun-version: 1.4.4 }
       - run: bun install --frozen-lockfile
+      # §14.5 dependency audit: fails the build on known vulnerabilities in locked dependencies.
+      - run: bun audit
       - run: bun run typecheck
       - run: bun run lint
       - run: bun run format:check

@@ -5,6 +5,8 @@ export interface Config {
   nodeEnv: Env["NODE_ENV"];
   /** Bearer token for GET /metrics. */
   metricsToken?: string;
+  /** §14.5 SSRF guard. */
+  outbound: { enforce: boolean; allow: string[] };
   /** §8.5 retention (cleanup job off unless enabled). */
   retention: { enabled: boolean; eventsDays: number; jobsOkDays: number; jobsFailedDays: number; transcriptDays: number };
   isProd: boolean;
@@ -51,6 +53,13 @@ export function createConfig(env: Env, cwd = process.cwd()): Config {
     nodeEnv: env.NODE_ENV,
     isProd,
     metricsToken: env.METRICS_TOKEN,
+    outbound: {
+      enforce: env.OUTBOUND_GUARD ? env.OUTBOUND_GUARD === "on" : isProd,
+      allow: (env.OUTBOUND_ALLOW ?? "")
+        .split(",")
+        .map((x) => x.trim())
+        .filter(Boolean),
+    },
     retention: {
       enabled: env.RETENTION_ENABLED,
       eventsDays: env.RETENTION_EVENTS_DAYS,

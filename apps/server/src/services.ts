@@ -30,6 +30,7 @@ import { createDevAgent } from "./modules/devagent/service";
 import { createHarness } from "./modules/harness/service";
 import { createDelivery } from "./modules/delivery/service";
 import { createSystem } from "./modules/system/service";
+import { createOutboundGuard } from "./core/outbound";
 import { createQuality } from "./modules/quality/service";
 import { createQa } from "./modules/qa/service";
 import { createMergeQueue } from "./modules/mergequeue/service";
@@ -78,12 +79,16 @@ export function createServices(config: Config, opts: ServiceOptions = {}) {
   const inbox = createInbox({ db, events, identity });
   const proposals = createProposals({ db, audit, events, identity, projects, chat, tasks, inbox });
   const approvals = createApprovals({ db, audit, events, identity, projects, tasks, inbox });
-  const llm = createLlm({ config, db, audit, events, identity, vault }, opts.llm);
+  // §14.5: every server-side request to a user-configured address goes through the SSRF guard.
+  const outbound = createOutboundGuard(config.outbound);
+  // Resolve the global fetch at call time (it can be swapped, e.g. by tests or instrumentation).
+  const lateFetch = ((input, init) => globalThis.fetch(input, init)) as typeof fetch;
+  const llm = createLlm({ config, db, audit, events, identity, vault }, { ...opts.llm, fetch: outbound.wrap(opts.llm?.fetch ?? lateFetch) });
   const runtime = createRuntime({ config, db, audit, events, identity, owner });
   const captain = createCaptain({ config, db, audit, events, jobs, identity, projects, chat, tasks, proposals, inbox, llm, runtime, realtime });
   proposals.hooks.afterAccept = (ctx, p, ids) => captain.afterAccept(ctx, p, ids);
   const sandbox = opts.sandbox ?? createSandbox(config);
-  const repos = createRepos({ config, db, audit, events, identity, projects, vault, fetch: opts.scmFetch });
+  const repos = createRepos({ config, db, audit, events, identity, projects, vault, fetch: outbound.wrap(opts.scmFetch ?? lateFetch), outbound });
   const workspaces = createWorkspaces({ config, db, audit, events, identity, repos, sandbox, objectStore, jobs });
   const harness = createHarness({ config, db, sandbox, runtime, llm });
   const devAgent = createDevAgent({ config, db, audit, events, jobs, identity, tasks, repos, workspaces, llm, runtime, harness });

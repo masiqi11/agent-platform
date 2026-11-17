@@ -64,6 +64,7 @@ export function routeOf(path: string): string {
 export function createApp(s: Services) {
   const webDist = s.config.dirs.webDist;
   const cors = new Set(s.config.trustedOrigins);
+  const hsts = s.config.publicUrl.startsWith("https://");
 
   const started = new WeakMap<Request, number>();
   const app = new Elysia()
@@ -76,6 +77,8 @@ export function createApp(s: Services) {
       set.headers["referrer-policy"] = "strict-origin-when-cross-origin";
       set.headers["x-frame-options"] = "DENY";
       set.headers["content-security-policy"] = CSP;
+      // §14.5: HTTPS only once deployed behind TLS (the proxy terminates it; the header still comes from here).
+      if (hsts) set.headers["strict-transport-security"] = "max-age=31536000; includeSubDomains";
       const origin = request.headers.get("origin");
       if (origin && cors.has(origin)) {
         set.headers["access-control-allow-origin"] = origin;
