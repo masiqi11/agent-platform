@@ -18,7 +18,7 @@ import { agent, appUser, artifact, principal, project, repo, task, taskOwner, wo
 import type { Identity } from "../identity/service";
 import type { Repos, RepoRow } from "../repos/service";
 import type { ExecResult, Sandbox } from "../sandbox/service";
-import { git } from "../scm/service";
+import { cloneWork, git, gitDirOf, refreshSandboxGit, removeWork } from "../scm/service";
 import { TERMINAL_PIPELINE, type PipelineStatus } from "../scm/service";
 
 type Jobs = ReturnType<typeof createJobs>;
@@ -168,7 +168,7 @@ export function createWorkspaces(d: { config: Config; db: Database; audit: Audit
       .select()
       .from(workspace)
       .where(and(eq(workspace.taskId, t.id), eq(workspace.repoId, r.id)));
-    if (existing?.status === "ready" && existing.worktreePath && existsSync(join(existing.worktreePath, ".git"))) return existing;
+    if (existing?.status === "ready" && existing.worktreePath && existsSync(gitDirOf(existing.worktreePath))) return existing;
     const settings = await settingsOf(t.projectId);
     const mirror = await syncMirror(r);
     const branch = existing?.branch ?? (await pickBranch(r, t, mirror, settings));
@@ -176,9 +176,9 @@ export function createWorkspaces(d: { config: Config; db: Database; audit: Audit
     const id = existing?.id ?? newId("wsp");
     if (!existing)
       await db.root.insert(workspace).values({ id, tenantId: t.tenantId, taskId: t.id, repoId: r.id, branch, status: "creating", worktreePath: path, workerId: null }).onConflictDoNothing();
-    await rm(path, { recursive: true, force: true });
+    await removeWork(path);
     await mkdir(resolve(path, ".."), { recursive: true });
-    await git(["clone", "-q", "--no-hardlinks", mirror, path], { cwd: "/" });
+    await cloneWork(mirror, path, { hardlinks: false });
     await excludeSandboxHome(path);
     const remoteHas = (await git(["show-ref", "--verify", "--quiet", `refs/heads/${branch}`], { cwd: mirror, allowFail: true })).ok;
     // Reuse the pushed branch (reassignment / recreate, TSK-补3); otherwise branch off the default branch.
@@ -243,8 +243,8 @@ export function createWorkspaces(d: { config: Config; db: Database; audit: Audit
    * hold the session token). It must never be staged by `git add -A`.
    */
   async function excludeSandboxHome(dir: string) {
-    const f = join(dir, ".git", "info", "exclude");
-    await mkdir(join(dir, ".git", "info"), { recursive: true });
+    const f = join(gitDirOf(dir), "info", "exclude");
+    await mkdir(join(gitDirOf(dir), "info"), { recursive: true });
     const cur = existsSync(f) ? await Bun.file(f).text() : "";
     if (!cur.split("\n").includes(".sandbox-home/")) await Bun.write(f, `${cur}${cur && !cur.endsWith("\n") ? "\n" : ""}.sandbox-home/\n`);
   }
@@ -260,6 +260,7 @@ export function createWorkspaces(d: { config: Config; db: Database; audit: Audit
     const msg = `${message.trim().slice(0, 2000)}\n\n${id.trailers.join("\n")}\n`;
     await git(["-c", `user.name=${id.name}`, "-c", `user.email=${id.email}`, "commit", "-q", "-m", msg], { cwd });
     const sha = (await git(["rev-parse", "HEAD"], { cwd })).out;
+    await refreshSandboxGit(cwd); // the sandbox's own view follows the new commit
     const stat = await diffStatOf(ws, await settingsOf(t.projectId));
     await db.root.update(workspace).set({ headCommit: sha, diffStat: stat, updatedAt: new Date() }).where(eq(workspace.id, ws.id));
     await d.audit.write(ctx, { action: "workspace.commit", resourceType: "workspace", resourceId: ws.id, projectId: t.projectId, after: { sha: sha.slice(0, 12), files: stat.files } });
@@ -467,7 +468,7 @@ export function createWorkspaces(d: { config: Config; db: Database; audit: Audit
     let status: PipelineStatus = "failed";
     let logText = "";
     try {
-      await git(["clone", "-q", r.url, dir], { cwd: "/" });
+      await cloneWork(r.url, dir);
       // Rebased merge-queue commits live under refs/merge-queue/* (not fetched by a plain clone).
       await git(["fetch", "-q", "origin", "+refs/merge-queue/*:refs/remotes/mq/*"], { cwd: dir, allowFail: true });
       await git(["checkout", "-q", sha], { cwd: dir });
@@ -478,7 +479,7 @@ export function createWorkspaces(d: { config: Config; db: Database; audit: Audit
     } catch (e) {
       logText = `CI 执行出错：${(e as Error).message}`;
     } finally {
-      await rm(dir, { recursive: true, force: true });
+      await removeWork(dir);
     }
     return { status, log: redactValue(logText), durationMs: res?.durationMs ?? 0 };
   }
@@ -562,21 +563,21 @@ export function createWorkspaces(d: { config: Config; db: Database; audit: Audit
   async function checkout(t: TaskRow, r: RepoRow, sha: string, purpose: "review" | "test") {
     const mirror = await syncMirror(r);
     const dir = join(root, t.tenantId, t.id, `${r.name}.${purpose}`);
-    await rm(dir, { recursive: true, force: true });
+    await removeWork(dir);
     await mkdir(resolve(dir, ".."), { recursive: true });
-    await git(["clone", "-q", "--no-hardlinks", mirror, dir], { cwd: "/" });
+    await cloneWork(mirror, dir, { hardlinks: false });
     await excludeSandboxHome(dir);
     await git(["checkout", "-q", "--detach", sha], { cwd: dir });
     return dir;
   }
   /** FR-REL-02: the test environment is destroyed when the run ends. */
   async function dropCheckout(dir: string) {
-    if (dir.startsWith(root + "/") && /\.(review|test)$/.test(dir)) await rm(dir, { recursive: true, force: true });
+    if (dir.startsWith(root + "/") && /\.(review|test)$/.test(dir)) await removeWork(dir);
   }
 
   /** FR-GIT-07: remove the directory (and container), keep the branch and the record. */
   async function release(ctx: Ctx, ws: WorkspaceRow, reason: string) {
-    if (ws.worktreePath) await rm(ws.worktreePath, { recursive: true, force: true });
+    if (ws.worktreePath) await removeWork(ws.worktreePath);
     if (ws.status === "released") return;
     await db.tx(async () => {
       await db.q().update(workspace).set({ status: "released", containerId: null, updatedAt: new Date() }).where(eq(workspace.id, ws.id));
