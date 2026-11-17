@@ -497,6 +497,40 @@ export function createCaptain(d: CaptainDeps) {
       aggregateId: id,
       payload: { questionId: id, groupId: q.groupId, projectId: q.projectId, messageId: sent.message.id, inboxPrincipalIds: requester ? [requester] : [] },
     });
+    // The details may already be in: people (especially in IM) often keep typing while the captain
+    // is still composing its question (found live in S8-7). A substantive human message posted after
+    // the request and before this card answers it now, instead of leaving the question open forever.
+    if (q.replyToId) {
+      const [req] = await db.root.select({ seq: message.seq }).from(message).where(eq(message.id, q.replyToId));
+      const early = req
+        ? await db.root
+            .select({ id: message.id, body: message.body, author: message.authorPrincipalId, seq: message.seq })
+            .from(message)
+            .innerJoin(principal, eq(principal.id, message.authorPrincipalId))
+            .where(
+              and(
+                eq(message.groupId, q.groupId),
+                gt(message.seq, req.seq),
+                lt(message.seq, sent.message.seq),
+                eq(principal.kind, "human"),
+                eq(message.kind, "text"),
+                isNull(message.threadId),
+                isNull(message.deletedAt),
+              ),
+            )
+            .orderBy(desc(message.seq))
+            .limit(5)
+        : [];
+      const ans = early.find((m) => isSubstantive(m.body));
+      if (ans) {
+        await resolveQuestion(ctx, id, { answer: ans.body.slice(0, 2000), by: ans.author, status: "answered" });
+        await d.jobs.enqueue(
+          "captain.turn",
+          { tenantId: ctx.tenantId, groupId: q.groupId, messageId: ans.id, kind: "answer", questionId: id, depth: q.wakeDepth + 1 },
+          { tenantId: ctx.tenantId, dedupeKey: `turn:${ans.id}`, concurrencyKey: `captain:${q.groupId}`, traceId: ctx.traceId, maxAttempts: 3 },
+        );
+      }
+    }
     return { questionId: id, messageId: sent.message.id };
   }
 

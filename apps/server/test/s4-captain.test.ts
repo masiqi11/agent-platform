@@ -111,6 +111,21 @@ describe("S4 captain — scripted model (exit criteria)", () => {
     expect(note?.body).toContain("负载最低");
   });
 
+  test("details posted before the follow-up card exists answer it (no question left hanging)", async () => {
+    await setModel("scripted:demo");
+    const since = new Date();
+    const m = await say(`@[${cap.principalId}] 结算服务最近超时，帮我查一下`);
+    // The person keeps typing before the captain's turn has run (common in IM).
+    await say("从今天上午 10 点开始，/settle 接口 p99 超过 20 秒，错误率 6%");
+    await cycle();
+    await cycle();
+    const qs = await t.s.db.root.select().from(question).where(eq(question.groupId, groupId));
+    const asked = qs.filter((q) => q.createdAt >= since);
+    expect(asked.map((q) => q.status)).toEqual(["answered"]);
+    const r = await after(m.seq);
+    expect(r.some((x) => x.kind === "proposal_card")).toBe(true);
+  });
+
   test("P1 is outside autoAssignPriorities → captain posts an assign proposal instead", async () => {
     const m = await say(`@[${cap.principalId}] 请修复 P0 线上退款接口 502，从今天 10:00 开始，错误率 30%`);
     await cycle();
