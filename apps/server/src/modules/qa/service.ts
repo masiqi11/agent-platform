@@ -352,16 +352,18 @@ export function createQa(d: {
           stopReason = "model_done";
           break;
         }
-        convo.push({ role: "assistant", content: `${res.content}\n<tool_calls>${JSON.stringify(calls)}</tool_calls>` });
-        const outs: string[] = [];
-        for (const call of calls) {
+        const ided = calls.map((c, i) => ({ id: `call_${steps}_${i}`, name: c.name, arguments: c.arguments }));
+        convo.push({ role: "assistant", content: res.content, toolCalls: ided });
+        const answered = new Set<string>();
+        for (const [ci, call] of calls.entries()) {
           const out = await d.runtime.invokeTool(actx, st, call as ParsedToolCall);
           const text = JSON.stringify(out).slice(0, 12_000);
           await d.runtime.recordTurn(ses.id, { role: "tool", content: text.slice(0, 4000), toolCalls: [call] });
-          outs.push(`<tool_result name="${call.name}">${text}</tool_result>`);
+          convo.push({ role: "tool", toolCallId: ided[ci]!.id, name: call.name, content: text });
+          answered.add(ided[ci]!.id);
           if (st.stop) break;
         }
-        convo.push({ role: "user", content: untrusted("tool", outs.join("\n")) });
+        for (const c of ided) if (!answered.has(c.id)) convo.push({ role: "tool", toolCallId: c.id, name: c.name, content: '{"ok":false,"error":"未执行"}' });
         if (st.stop) {
           stopReason = st.stop;
           break;

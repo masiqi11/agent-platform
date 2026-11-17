@@ -16,9 +16,66 @@ import { SCRIPTS, type ScriptReply } from "./scripts";
 type ProviderRow = typeof modelProvider.$inferSelect;
 type ModelRow = typeof model.$inferSelect;
 
-export interface ChatMsg {
-  role: "system" | "user" | "assistant";
-  content: string;
+/**
+ * A conversation message. Agent loops send their earlier steps as native tool messages: an
+ * assistant message with `toolCalls`, then one `tool` message per call (its raw JSON result).
+ * Replaying them as text taught strong models to write tool calls as text instead of calling them.
+ */
+export type ChatMsg =
+  | { role: "system" | "user"; content: string }
+  | { role: "assistant"; content: string; toolCalls?: Array<{ id: string; name: string; arguments: Record<string, unknown> }> }
+  | { role: "tool"; content: string; toolCallId: string; name: string };
+
+const wrapUntrusted = (body: string) => `<untrusted source="tool">\n${body.replace(/<\/?untrusted/gi, "‹untrusted")}\n</untrusted>`;
+
+/** Text rendering of tool history, for scripted models and models without native tool support. */
+export function textHistory(messages: ChatMsg[]): Array<{ role: "system" | "user" | "assistant"; content: string }> {
+  const out: Array<{ role: "system" | "user" | "assistant"; content: string }> = [];
+  let results: string[] = []; // the current step's results share one untrusted block
+  const flush = () => {
+    if (results.length) out.push({ role: "user", content: wrapUntrusted(results.join("\n")) });
+    results = [];
+  };
+  for (const m of messages) {
+    if (m.role === "tool") {
+      results.push(`<tool_result name="${m.name}">${m.content}</tool_result>`);
+      continue;
+    }
+    flush();
+    if (m.role === "assistant" && m.toolCalls?.length)
+      out.push({ role: "assistant", content: `${m.content}\n<tool_calls>${JSON.stringify(m.toolCalls.map((c) => ({ name: c.name, arguments: c.arguments })))}</tool_calls>` });
+    else out.push({ role: m.role, content: m.content });
+  }
+  flush();
+  return out;
+}
+
+/** Drops the oldest step of an agent transcript: one message and the tool results that answer it. */
+export function dropOldestStep(convo: ChatMsg[]) {
+  convo.shift();
+  while (convo[0]?.role === "tool") convo.shift();
+}
+
+/** OpenAI-compatible wire format. */
+function openAiMessages(messages: ChatMsg[]) {
+  return messages.map((m) =>
+    m.role === "tool"
+      ? { role: "tool", tool_call_id: m.toolCallId, content: wrapUntrusted(m.content) }
+      : m.role === "assistant" && m.toolCalls?.length
+        ? { role: "assistant", content: m.content || null, tool_calls: m.toolCalls.map((c) => ({ id: c.id, type: "function", function: { name: c.name, arguments: JSON.stringify(c.arguments) } })) }
+        : { role: m.role, content: m.content },
+  );
+}
+
+/** Ollama /api/chat wire format. */
+function ollamaMessages(messages: ChatMsg[]) {
+  return messages.map((m) =>
+    m.role === "tool"
+      ? { role: "tool", tool_name: m.name, content: wrapUntrusted(m.content) }
+      : m.role === "assistant" && m.toolCalls?.length
+        ? { role: "assistant", content: m.content, tool_calls: m.toolCalls.map((c) => ({ function: { name: c.name, arguments: c.arguments } })) }
+        : { role: m.role, content: m.content },
+  );
 }
 export interface ToolSpec {
   name: string;
@@ -416,7 +473,7 @@ export function createLlm(d: { config: Config; db: Database; audit: Audit; event
     const stream = Boolean(req.onDelta) && m.supportsStreaming;
     const body: Record<string, unknown> = {
       model: m.name,
-      messages: req.messages,
+      messages: req.tools?.length && m.supportsTools ? ollamaMessages(req.messages) : textHistory(req.messages),
       stream,
       options: { temperature: req.modelPolicy?.temperature ?? 0.2, num_predict: req.modelPolicy?.maxTokens ?? 1024, num_ctx: m.contextWindow },
     };
@@ -457,7 +514,13 @@ export function createLlm(d: { config: Config; db: Database; audit: Audit; event
 
   async function callOpenAi(m: ModelRow, p: ProviderRow, key: string | undefined, req: CompleteInput): Promise<RawReply> {
     const stream = Boolean(req.onDelta) && m.supportsStreaming;
-    const body: Record<string, unknown> = { model: m.name, messages: req.messages, temperature: req.modelPolicy?.temperature ?? 0.2, max_tokens: req.modelPolicy?.maxTokens ?? 1024, stream };
+    const body: Record<string, unknown> = {
+      model: m.name,
+      messages: req.tools?.length && m.supportsTools ? openAiMessages(req.messages) : textHistory(req.messages),
+      temperature: req.modelPolicy?.temperature ?? 0.2,
+      max_tokens: req.modelPolicy?.maxTokens ?? 1024,
+      stream,
+    };
     if (req.tools?.length && m.supportsTools) body.tools = toolDefs(req.tools);
     if (req.json && m.supportsJson && !req.tools?.length) body.response_format = { type: "json_object" };
     if (stream) body.stream_options = { include_usage: true };
@@ -540,7 +603,7 @@ export function createLlm(d: { config: Config; db: Database; audit: Audit; event
     const name = m.name.replace(/^scripted:/, "");
     const script = SCRIPTS[name];
     if (!script) throw new ProviderError(`未知脚本 ${name}`, false, "client");
-    const r: ScriptReply = script({ purpose: req.purpose, messages: req.messages, toolNames: (req.tools ?? []).map((t) => t.name), json: Boolean(req.json) });
+    const r: ScriptReply = script({ purpose: req.purpose, messages: textHistory(req.messages), toolNames: (req.tools ?? []).map((t) => t.name), json: Boolean(req.json) });
     if (r.fail === "timeout") throw new ProviderError("脚本模拟超时", true, "timeout");
     if (r.fail === "server_error") throw new ProviderError("脚本模拟 500", true, "server");
     if (r.fail === "refused") throw new ProviderError("脚本模拟拒答", false, "refused");

@@ -12,9 +12,9 @@ import type { Config } from "../../config";
 import type { Database } from "../../db";
 import { agent, llmCall, project, review, session, task, workspace } from "../../db/schema";
 import type { Identity } from "../identity/service";
-import { BudgetExceeded, LlmUnavailable, type ChatMsg, type Llm } from "../llm/service";
+import { BudgetExceeded, LlmUnavailable, dropOldestStep, type ChatMsg, type Llm } from "../llm/service";
 import type { Repos } from "../repos/service";
-import { LEASE_MS, untrusted, type Runtime, type TurnState } from "../runtime/service";
+import { LEASE_MS, type Runtime, type TurnState } from "../runtime/service";
 import { resolveInWorkspace } from "../sandbox/service";
 import { git } from "../scm/service";
 import type { Tasks } from "../tasks/service";
@@ -547,9 +547,10 @@ export function createDevAgent(d: {
           stopReason = "model_done";
           break;
         }
-        convo.push({ role: "assistant", content: `${res.content}\n<tool_calls>${JSON.stringify(calls)}</tool_calls>` });
-        const outputs: string[] = [];
-        for (const call of calls) {
+        const ided = calls.map((c, i) => ({ id: `call_${steps}_${i}`, name: c.name, arguments: c.arguments }));
+        convo.push({ role: "assistant", content: res.content, toolCalls: ided });
+        const answered = new Set<string>();
+        for (const [ci, call] of calls.entries()) {
           // AGT-补1 loop guard: the same call with the same args N times in a row aborts the turn.
           const sig = `${call.name}:${JSON.stringify(call.arguments)}`;
           recent.push(sig);
@@ -561,16 +562,18 @@ export function createDevAgent(d: {
           hooks.afterTool?.(call.name);
           const text = JSON.stringify(out).slice(0, 12_000);
           await d.runtime.recordTurn(ses.id, { role: "tool", content: text.slice(0, 4000), toolCalls: [call] });
-          outputs.push(`<tool_result name="${call.name}">${text}</tool_result>`);
+          convo.push({ role: "tool", toolCallId: ided[ci]!.id, name: call.name, content: text });
+          answered.add(ided[ci]!.id);
           if (st.stop) break;
         }
+        // Every call needs a result message, even ones skipped by an early stop.
+        for (const c of ided) if (!answered.has(c.id)) convo.push({ role: "tool", toolCallId: c.id, name: c.name, content: '{"ok":false,"error":"未执行"}' });
         if (stopReason === "loop_detected") {
           await d.tasks.comment(actx, t.id, `检测到重复调用同一工具（${recent[recent.length - 1]!.split(":")[0]}），本轮已中止，避免空转。`).catch(() => undefined);
           break;
         }
-        convo.push({ role: "user", content: untrusted("tool", outputs.join("\n")) });
-        // Keep the running transcript inside the model window (oldest steps dropped first).
-        while (convo.length > 4 && convo.reduce((n, m) => n + estimateTokens(m.content), 0) > budgets.L3 + budgets.L4) convo.splice(0, 2);
+        // Keep the running transcript inside the model window (oldest whole steps dropped first).
+        while (convo.length > 4 && convo.reduce((n, m) => n + estimateTokens(m.content), 0) > budgets.L3 + budgets.L4) dropOldestStep(convo);
         if (st.stop) {
           stopReason = st.stop;
           break;

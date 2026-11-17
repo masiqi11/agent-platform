@@ -2,7 +2,7 @@ import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { and, eq } from "drizzle-orm";
 import type { Ctx } from "../src/core/context";
 import { budget, llmCall, modelProvider, project, tenant } from "../src/db/schema";
-import { createLlm } from "../src/modules/llm/service";
+import { createLlm, textHistory, type ChatMsg } from "../src/modules/llm/service";
 import { createTestApp, type TestApp } from "./helpers";
 
 process.env.LLM_BACKOFF_MS = "2";
@@ -202,6 +202,34 @@ describe("S4 model gateway", () => {
       { name: "search_knowledge", arguments: { query: "支付服务 /pay/callback" } },
       { name: "search_knowledge", arguments: { query: "pay service timeout" } },
     ]);
+  });
+
+  test("agent tool history goes out as native tool messages (OpenAI and Ollama); scripted models get text", async () => {
+    const history: ChatMsg[] = [
+      { role: "system", content: "s" },
+      { role: "user", content: "修复超时" },
+      { role: "assistant", content: "先看文件", toolCalls: [{ id: "call_0_0", name: "read_file", arguments: { path: "src/gateway.ts" } }] },
+      { role: "tool", toolCallId: "call_0_0", name: "read_file", content: '{"ok":true,"result":{"content":"x"}}' },
+    ];
+    const tools = [{ name: "read_file", description: "r", parameters: {} }];
+    handler = () => Response.json({ choices: [{ message: { content: "ok" } }] });
+    await t.s.llm.complete(ctx, { purpose: "test.history", promptVersion: "v", scope: {}, modelPolicy: { primary: "remote-small" }, messages: history, tools });
+    const sent = seen.at(-1).body.messages as Array<Record<string, unknown>>;
+    expect(sent[2]).toMatchObject({ role: "assistant", tool_calls: [{ id: "call_0_0", type: "function", function: { name: "read_file", arguments: '{"path":"src/gateway.ts"}' } }] });
+    expect(sent[3]).toMatchObject({ role: "tool", tool_call_id: "call_0_0" });
+    expect(String(sent[3]!.content)).toContain('<untrusted source="tool">');
+    expect(JSON.stringify(sent)).not.toContain("<tool_calls>");
+
+    handler = () => ollamaReply("ok");
+    await t.s.llm.complete(ctx, { purpose: "test.history", promptVersion: "v", scope: {}, modelPolicy: { primary: "gemma4:e2b" }, messages: history, tools });
+    const ol = seen.at(-1).body.messages as Array<Record<string, unknown>>;
+    expect(ol[2]).toMatchObject({ role: "assistant", tool_calls: [{ function: { name: "read_file", arguments: { path: "src/gateway.ts" } } }] });
+    expect(ol[3]).toMatchObject({ role: "tool", tool_name: "read_file" });
+
+    const text = textHistory(history);
+    expect(text.map((m) => m.role)).toEqual(["system", "user", "assistant", "user"]);
+    expect(text[2]!.content).toContain('<tool_calls>[{"name":"read_file"');
+    expect(text[3]!.content).toContain('<tool_result name="read_file">');
   });
 
   test("LLM-10: secrets are redacted before leaving", async () => {
