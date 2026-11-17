@@ -1,6 +1,6 @@
 # ADR-0010：Agent 绑定执行引擎（Claude Code / Codex / OpenCode / pi）
 
-- 状态：已采纳，实施中（2026-11-17）
+- 状态：已采纳，H0–H4 已实现（2026-11-17）
 - 相关：§8（模型网关）、§12.5（Agent）、SBX-01…10、INV-08、INV-10、INV-17、LLM-01…13、ADR-0006、ADR-0009
 
 ## 背景与决定
@@ -46,12 +46,36 @@
 4. **用量格式各不相同**：Claude Code 的 result 里有 `total_cost_usd`，Codex 在 `turn.completed` 里给 usage，OpenCode 在每个 `step_finish` 里给 tokens，pi 在每条 assistant 消息里给 usage。平台计费以模型代理的计量为准，harness 自报的数字只作参考。
 5. **用中转站时的特殊配置**：pi 的 key 在配置里必须写成 `$ENV` 引用；Codex 在 `/tmp` 下运行时会提示无法创建辅助程序，不影响结果。
 
+## 实现（H1–H4）
+
+| 部分        | 位置                                                                            | 要点                                                                                                                                                                                                                                                                                                     |
+| ----------- | ------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| 模型代理    | `/llm/v1/{chat/completions,responses,messages}`                                 | 只认 Agent 会话令牌（`Bearer` 或 `x-api-key`），会话必须在运行中；模型强制为 Agent 配置的模型；出域、熔断、预算、脱敏、计量与内置引擎一致。供应商需登记支持的接口（`apis`），不支持该接口的供应商不会被选中                                                                                              |
+| 平台工具    | `POST /mcp`（MCP streamable HTTP，JSON 响应）                                   | 每个角色只列出固定的工具：开发 `get_task / add_task_comment / block_task / search_knowledge / ask_project_captain`，评审 `get_task / get_diff / submit_review / …`，测试 `get_task / run_tests / submit_test_result / …`。git、MR、提交评审不在其中。调用经 `runtime.invokeTool`，权限检查与内置引擎相同 |
+| 适配器      | `modules/harness/adapters.ts`                                                   | 每个引擎的启动命令、配置文件和事件解析。令牌只以环境变量 `PLATFORM_LLM_TOKEN` 引用，不写入任何文件；角色限制（评审、测试只读，评审只能跑 git 只读命令）只是第二道防线                                                                                                                                    |
+| 执行        | `modules/harness/service.ts`                                                    | 在工作区运行，HOME 为 `<工作区>/.sandbox-home`（已加入 `.git/info/exclude`），事件实时写入会话转录；运行上下文存在会话上，MCP 请求可以落到任何进程                                                                                                                                                       |
+| 开发        | `devagent`                                                                      | 引擎只改代码；之后由平台提交、推送（密钥扫描）、开 MR、等 CI；CI 通过即以引擎总结提交评审，CI 失败则带着失败信息重跑；返工续接引擎会话。引擎失败、没有改动、或自己 `block_task` 时本轮结束                                                                                                               |
+| 评审 / 测试 | `qa`                                                                            | 在该提交的独立只读检出中运行；结论只能经 MCP 提交，平台检查是否有绑定该提交、由该 Agent 给出的结论                                                                                                                                                                                                       |
+| 配置        | Agent `engine` 字段、`modelPolicy.reasoning`；`GET /projects/:id/model-options` | 推理强度映射：Claude Code `--effort`，Codex `model_reasoning_effort`（max→xhigh），OpenCode `--variant`，pi `--thinking`。船长只能用内置引擎                                                                                                                                                             |
+| 界面        | Agent 编辑框                                                                    | 引擎选项卡 → 该引擎能用的模型（其余置灰并写明原因）→ 推理强度 Low/High/Max                                                                                                                                                                                                                               |
+
+### 实现中的发现
+
+6. **中转站的流式并行工具调用会打乱参数**（与 ADR-0009 #2 同源）：真实 pi 第一次跑开发流程时，74 轮中有 21 轮是参数损坏的工具调用；部分分片既无 id、又共用 index，无法在代理端还原。现在 Chat 接口的流式请求由代理以非流式取回，再按调用逐个生成流返回给引擎；修复后 0 损坏。
+7. **docker 沙箱暂不支持外部引擎**：引擎需要访问平台的模型代理和 MCP，而 docker 沙箱目前没有网络（出口白名单在 S8）。外部引擎目前要求 process 沙箱，生产部署前需要补上 S8。
+8. **HOME 曾可能被提交**：`git add -A` 会把引擎的配置和缓存一起提交。现在每个工作区和检出都把 `.sandbox-home/` 写入 `.git/info/exclude`，并有回归测试。
+
+### 验证
+
+- CI：`test/h2-harness.test.ts` 用假 pi（`test/fixtures/harness/fake-pi.ts`，与真实 pi 同样经代理、MCP 和环境变量令牌工作）跑通开发 → MR → CI → 评审 → 测试，以及「无改动」「引擎自行阻塞」「非运行会话令牌被拒」；`e2e/h4-engine.spec.ts` 覆盖选择器。
+- 真实运行（`claude-opus-5-5`，经中转站）：pi 开发流程见 `docs/results/h2-pi-opus55.json`（120 秒到评审中，10 次模型调用，0 失败）；主场景见 `docs/results/s6-harness-opus55.json`。
+
 ## 实施计划
 
 | 阶段  | 内容                                                                                                                                                           | 退出标准                                                        |
 | ----- | -------------------------------------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------- |
 | H0 ✅ | 四个 harness 跑通无界面模式、MCP 注入，保存事件样本                                                                                                            | 见上                                                            |
-| H1    | 平台模型代理：`/llm/v1/messages`、`/llm/v1/responses`、`/llm/v1/chat/completions`，使用会话令牌，并做计量、预算、脱敏、出域检查；第一阶段只做同格式透传        | 用 curl 和四个 harness 经代理调用中转站成功，用量正确入账       |
-| H2    | 执行引擎框架：Agent 增加 `engine` 字段，适配器把各家事件统一写入会话转录；平台 MCP 服务通过 HTTP 提供并用会话令牌鉴权；提交和推送接入现有流程；CI 用假 harness | CI 用假 harness 跑通主场景；真实 harness 跑通一次               |
-| H3    | 补齐四个适配器；返工续接（`claude --resume`、`codex exec resume`、`opencode --session`、pi 会话目录）；评审和测试角色只读，结论只能经平台工具提交              | 四个引擎各自跑通                                                |
-| H4    | 界面：Agent 编辑页选择执行引擎、会话检查器显示 harness 事件；沙箱镜像预装固定版本的 harness；文档                                                              | 「小码 = OpenCode、测测 = Claude Code」用真实模型跑通完整主场景 |
+| H1 ✅ | 平台模型代理：`/llm/v1/messages`、`/llm/v1/responses`、`/llm/v1/chat/completions`，使用会话令牌，并做计量、预算、脱敏、出域检查；第一阶段只做同格式透传        | 用 curl 和四个 harness 经代理调用中转站成功，用量正确入账       |
+| H2 ✅ | 执行引擎框架：Agent 增加 `engine` 字段，适配器把各家事件统一写入会话转录；平台 MCP 服务通过 HTTP 提供并用会话令牌鉴权；提交和推送接入现有流程；CI 用假 harness | CI 用假 harness 跑通主场景；真实 harness 跑通一次               |
+| H3 ✅ | 补齐四个适配器；返工续接（`claude --resume`、`codex exec resume`、`opencode --session`、pi 会话目录）；评审和测试角色只读，结论只能经平台工具提交              | 四个引擎各自跑通                                                |
+| H4 ✅ | 界面：Agent 编辑页选择执行引擎、会话检查器显示 harness 事件；沙箱镜像预装固定版本的 harness；文档                                                              | 「小码 = OpenCode、测测 = Claude Code」用真实模型跑通完整主场景 |
