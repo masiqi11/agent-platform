@@ -18,7 +18,7 @@ import type { Identity } from "../identity/service";
 import type { Inbox } from "../inbox/service";
 import type { Quality } from "../quality/service";
 import type { Repos, RepoRow } from "../repos/service";
-import { ScmAuthError, ScmNotReady, createGitLabScm, git } from "../scm/service";
+import { ScmAuthError, ScmNotReady, ScmPermissionError, createGitLabScm, git } from "../scm/service";
 import type { Tasks } from "../tasks/service";
 import type { Workspaces } from "../workspaces/service";
 
@@ -267,6 +267,7 @@ export function createMergeQueue(d: {
           await update(item, { lastError: e.message.slice(0, 500) });
           return "wait";
         }
+        if (e instanceof ScmPermissionError) return needsHuman(item, t, e.message);
         if (e instanceof ScmAuthError) {
           await d.repos.onAuthError(r, e);
           return needsHuman(item, t, "GitLab 凭据无效");

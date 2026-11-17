@@ -96,6 +96,8 @@ export const demoScript: Script = (req) => {
   }
   if (req.purpose === "dev.turn") return devScript(req);
   if (req.purpose === "review.turn") return reviewerScript(req);
+  if (req.purpose === "kb.judge") return kbJudgeScript(req);
+  if (req.purpose === "kb.answer") return kbAnswerScript(req);
   if (req.purpose === "test.turn") return testerScript(req);
   if (req.purpose === "captain.turn") {
     const t = triggerText(req)
@@ -350,6 +352,43 @@ export const testerScript: Script = (req) => {
       },
     ],
   };
+};
+
+/* ───────────── scripted knowledge-base judge / answer (S7) ───────────── */
+
+function kbQuestion(req: ScriptRequest) {
+  return (
+    req.messages
+      .map((m) => m.content)
+      .join("\n")
+      .match(/问题：(.+)/)?.[1] ?? ""
+  ).trim();
+}
+/** Latin identifiers (≥ 2 chars) and CJK bigrams. */
+function kbTokens(text: string): Set<string> {
+  const out = new Set<string>(text.toLowerCase().match(/[a-z0-9_]{2,}/g) ?? []);
+  for (const m of text.matchAll(/[\u4e00-\u9fff]+/g)) for (let i = 0; i + 1 < m[0].length; i++) out.add(m[0].slice(i, i + 2));
+  return out;
+}
+
+/** SAG2 judge: a candidate is evidence if it shares a meaningful token with the question; expands with identifiers it mentions. */
+export const kbJudgeScript: Script = (req) => {
+  const q = kbTokens(kbQuestion(req));
+  const all = req.messages.map((m) => m.content).join("\n");
+  const cands = [...all.matchAll(/<candidate id="([^"]+)" path="([^"]*)">([\s\S]*?)<\/candidate>/g)].map((m) => ({ id: m[1]!, path: m[2]!, text: m[3]! }));
+  const relevant = cands.filter((c) => [...kbTokens(`${c.path} ${c.text}`)].some((t) => q.has(t)));
+  const ids = new Set<string>();
+  for (const c of relevant) for (const m of c.text.matchAll(/\b([A-Z][A-Z0-9_]{5,}|[a-z]+[A-Z][A-Za-z0-9]{4,})\b/g)) if (!all.split("候选：")[0]!.includes(m[1]!)) ids.add(m[1]!);
+  return { content: JSON.stringify({ relevant: relevant.map((c) => c.id), expand: [...ids].slice(0, 3) }) };
+};
+
+/** Project captain answer: names the top snippets and cites them by id (citations are checked server-side). */
+export const kbAnswerScript: Script = (req) => {
+  const all = req.messages.map((m) => m.content).join("\n");
+  const snips = [...all.matchAll(/<snippet id="([^"]+)" ref="([^"]+)">/g)].map((m) => ({ id: m[1]!, ref: m[2]! }));
+  if (!snips.length) return { content: JSON.stringify({ answer: "不知道。", citations: [] }) };
+  const top = snips.slice(0, 2);
+  return { content: JSON.stringify({ answer: `相关实现见 ${top.map((t) => t.ref).join("、")}。`, citations: top.map((t) => t.id) }) };
 };
 
 /** A model that never follows instructions (TRAP-14). */

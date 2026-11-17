@@ -1,0 +1,53 @@
+{
+  "at": "2026-11-17T00:13:25.540Z",
+  "gitlab": "gitlab",
+  "steps": [
+    {
+      "step": "bind + access check",
+      "ok": true,
+      "ms": 1317,
+      "note": "[]"
+    },
+    {
+      "step": "task → in_progress",
+      "ok": true,
+      "ms": 5352
+    },
+    {
+      "step": "task → in_review",
+      "ok": true,
+      "ms": 16221
+    },
+    {
+      "step": "task → in_progress",
+      "ok": true,
+      "ms": 22191
+    },
+    {
+      "step": "task → in_review",
+      "ok": true,
+      "ms": 38407
+    },
+    {
+      "step": "task → testing",
+      "ok": true,
+      "ms": 44354
+    },
+    {
+      "step": "task → done",
+      "ok": true,
+      "ms": 56359
+    },
+    {
+      "step": "merged by the queue",
+      "ok": true,
+      "ms": 56360,
+      "note": "merged "
+    },
+    {
+      "step": "no dead jobs",
+      "ok": true,
+      "ms": 56360
+    }
+  ]
+}

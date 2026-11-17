@@ -1,4 +1,4 @@
-import { estimateTokens, extractFirstJson, parseTextToolCalls, type ParsedToolCall, type ProjectSettings } from "@ap/shared";
+import { estimateTokens, extractFirstJson, tokenize, parseTextToolCalls, type ParsedToolCall, type ProjectSettings } from "@ap/shared";
 import { and, asc, desc, eq, gte, sql } from "drizzle-orm";
 import type { Audit } from "../../core/audit";
 import type { Ctx } from "../../core/context";
@@ -92,6 +92,22 @@ interface RawReply {
   tokensOut?: number;
 }
 
+/** Vector column dimension (§8.7): other dimensions need a new index version, not supported in place. */
+export const EMBED_DIM = 768;
+export const SCRIPTED_EMBED_MODEL = "scripted:embed";
+
+/** Deterministic "embedding" for CI: hashed bag of tokens (incl. CJK bigrams), L2-normalised. */
+export function hashEmbed(text: string): number[] {
+  const v = Array.from({ length: EMBED_DIM }, () => 0);
+  for (const tok of tokenize(text)) {
+    let h = 2166136261;
+    for (let i = 0; i < tok.length; i++) h = Math.imul(h ^ tok.charCodeAt(i), 16777619);
+    v[(h >>> 0) % EMBED_DIM]! += 1;
+  }
+  const n = Math.sqrt(v.reduce((a, b) => a + b * b, 0)) || 1;
+  return v.map((x) => x / n);
+}
+
 const CIRCUIT_THRESHOLD = 5;
 const CIRCUIT_COOLDOWN_MS = 60_000;
 
@@ -138,6 +154,23 @@ export function createLlm(d: { config: Config; db: Database; audit: Audit; event
           notes: "确定性脚本模型",
         });
     }
+    // S7: deterministic embedding model for CI / demos (768-d to match the vector column, §8.7).
+    const [sp] = await db.root
+      .select()
+      .from(modelProvider)
+      .where(and(eq(modelProvider.tenantId, tenantId), eq(modelProvider.kind, "scripted")));
+    if (sp && !(await findModel(tenantId, SCRIPTED_EMBED_MODEL)))
+      await db.root.insert(model).values({
+        id: newId("mdl"),
+        tenantId,
+        providerId: sp.id,
+        name: SCRIPTED_EMBED_MODEL,
+        contextWindow: 8192,
+        embeddingDim: EMBED_DIM,
+        inputPrice: 0,
+        outputPrice: 0,
+        notes: "确定性嵌入（哈希词袋）",
+      });
     const boot = d.config.llmBootstrap;
     if (boot && !existing.some((p) => p.kind === "openai_compatible" && p.baseUrl === boot.baseUrl)) {
       const ollama = /11434/.test(boot.baseUrl) || process.env.LLM_DIALECT === "ollama";
@@ -175,12 +208,24 @@ export function createLlm(d: { config: Config; db: Database; audit: Audit; event
         outputPrice: 0,
         notes: "环境变量引导",
       });
+      if (boot.embeddingModel)
+        await db.root.insert(model).values({
+          id: newId("mdl"),
+          tenantId,
+          providerId: pid,
+          name: boot.embeddingModel,
+          contextWindow: 8192,
+          embeddingDim: EMBED_DIM,
+          inputPrice: 0,
+          outputPrice: 0,
+          notes: "环境变量引导（嵌入）",
+        });
     }
   }
 
   async function tenantSettings(tenantId: string) {
     const [t] = await db.root.select({ settings: tenant.settings }).from(tenant).where(eq(tenant.id, tenantId));
-    return (t?.settings ?? {}) as { defaultModel?: string; agentsPaused?: boolean };
+    return (t?.settings ?? {}) as { defaultModel?: string; agentsPaused?: boolean; embeddingModel?: string | null };
   }
 
   async function findModel(tenantId: string, name: string) {
@@ -803,6 +848,79 @@ export function createLlm(d: { config: Config; db: Database; audit: Audit; event
     };
   }
 
-  return { complete, defaultModelName, ensureDefaults, budgetBlocked, tenantSettings, listProviders, createProvider, testProvider, setDefaultModel, setBudget, usage, findModel };
+  /* ───────────── embeddings (S7, §8.7) ───────────── */
+
+  /** Embedding model in effect: tenant setting → env bootstrap → none (vector route off, not an error). */
+  async function embeddingModelName(tenantId: string): Promise<string | null> {
+    const s = await tenantSettings(tenantId);
+    if (s.embeddingModel === null) return null;
+    return s.embeddingModel ?? d.config.llmBootstrap?.embeddingModel ?? null;
+  }
+
+  /**
+   * Embeds texts with the tenant's embedding model. Returns null when none is configured, the
+   * dimension does not match the vector column, or egress rules forbid the provider for the project.
+   * Inputs are redacted first (LLM-10) and the call is metered (purpose "embed", OBS-补4).
+   */
+  async function embed(ctx: Ctx, texts: string[], scope: LlmScope = {}): Promise<{ model: string; vectors: number[][] } | null> {
+    await ensureDefaults(ctx.tenantId);
+    const name = await embeddingModelName(ctx.tenantId);
+    if (!name || !texts.length) return null;
+    const r = await findModel(ctx.tenantId, name);
+    if (!r || r.m.embeddingDim !== EMBED_DIM) return null;
+    if (await egressAllowed(scope.projectId, r.p)) return null;
+    const input = texts.map((t) => redactValue(t).slice(0, 8000));
+    const t0 = Date.now();
+    let vectors: number[][];
+    try {
+      if (r.p.kind === "scripted") vectors = input.map(hashEmbed);
+      else {
+        const key = await apiKeyFor(r.p);
+        const base = r.p.baseUrl.replace(/\/$/, "");
+        const ollama = r.p.dialect === "ollama";
+        const res = await doFetch(ollama ? `${base}/api/embed` : `${base}/embeddings`, {
+          method: "POST",
+          headers: { "content-type": "application/json", ...(key ? { authorization: `Bearer ${key}` } : {}) },
+          body: JSON.stringify({ model: r.m.name, input }),
+          signal: AbortSignal.timeout(timeoutMs),
+        });
+        if (!res.ok) throw new ProviderError(`HTTP ${res.status}`, res.status >= 500, "server");
+        const body = (await res.json()) as { embeddings?: number[][]; data?: Array<{ embedding: number[] }> };
+        vectors = ollama ? (body.embeddings ?? []) : (body.data ?? []).map((x) => x.embedding);
+        if (vectors.length !== input.length || vectors.some((v) => v.length !== EMBED_DIM)) throw new ProviderError("嵌入维度或数量不符", false, "client");
+      }
+      await meter(
+        ctx,
+        { purpose: "embed", promptVersion: "embed@1", scope, messages: [] },
+        { model: r.m.name, providerId: r.p.id, tokensIn: input.reduce((n, x) => n + estimateTokens(x), 0), tokensOut: 0, cost: 0, latencyMs: Date.now() - t0, status: "ok", dataClasses: ["code"] },
+      );
+      return { model: r.m.name, vectors };
+    } catch (e) {
+      await meter(
+        ctx,
+        { purpose: "embed", promptVersion: "embed@1", scope, messages: [] },
+        { model: r.m.name, providerId: r.p.id, latencyMs: Date.now() - t0, status: "error", error: (e as Error).message.slice(0, 300), dataClasses: ["code"] },
+      );
+      log.warn("llm.embed_failed", { err: (e as Error).message.slice(0, 200) });
+      return null;
+    }
+  }
+
+  return {
+    embed,
+    embeddingModelName,
+    complete,
+    defaultModelName,
+    ensureDefaults,
+    budgetBlocked,
+    tenantSettings,
+    listProviders,
+    createProvider,
+    testProvider,
+    setDefaultModel,
+    setBudget,
+    usage,
+    findModel,
+  };
 }
 export type Llm = ReturnType<typeof createLlm>;

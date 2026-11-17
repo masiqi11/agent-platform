@@ -32,6 +32,7 @@ import { createSystem } from "./modules/system/service";
 import { createQuality } from "./modules/quality/service";
 import { createQa } from "./modules/qa/service";
 import { createMergeQueue } from "./modules/mergequeue/service";
+import { createKnowledge } from "./modules/knowledge/service";
 
 export interface ServiceOptions {
   /** Worker/consumer owner id (unique per process). */
@@ -92,6 +93,8 @@ export function createServices(config: Config, opts: ServiceOptions = {}) {
   quality.hooks.enqueueMerge = (ctx, t, sha) => mergeQueue.enqueue(ctx, t, sha);
   quality.hooks.dequeue = (ctx, taskId, reason) => mergeQueue.dequeue(ctx, taskId, reason);
   mergeQueue.hooks.afterMerged = (ctx, taskId) => captain.completionSummary(ctx, taskId);
+  const knowledge = createKnowledge({ config, db, audit, events, jobs, identity, projects, repos, workspaces, llm, runtime });
+  captain.kbHooks.federated = (ctx, q) => knowledge.federated(ctx, q);
 
   const base = {
     config,
@@ -128,6 +131,7 @@ export function createServices(config: Config, opts: ServiceOptions = {}) {
     quality,
     qa,
     mergeQueue,
+    knowledge,
     addRedactionValue,
   };
   return base;

@@ -7,8 +7,9 @@
  *   bun test/gitlab/s6-gitlab.ts --print-seed DIR   # write the demo repo (+ .gitlab-ci.yml) to DIR to push once
  *
  * Prerequisites: the project's default branch holds the demo payments code (use --print-seed), a
- * Runner is attached, the default branch is protected, and the token is a Developer project token
- * (scope api). Webhooks are not needed: the platform falls back to polling (no public URL in CI).
+ * Runner is attached, the default branch is protected with「允许推送」Maintainers and「允许合并」Developers +
+ * Maintainers, and the token is a Developer project token (scope api). `scripts/gitlab-local.sh up` sets
+ * all of this up on a local GitLab CE in docker. Webhooks are not needed: the platform falls back to polling (no public URL in CI).
  * Results go to docs/results/s6-gitlab.json.
  */
 import { mkdirSync, writeFileSync } from "node:fs";
@@ -87,6 +88,6 @@ try {
   mark("no dead jobs", dead.length === 0, dead.map((j) => `${j.type}: ${String(j.lastError).slice(0, 120)}`).join(" | "));
 } finally {
   const out = resolve(import.meta.dir, "../../../../docs/results/s6-gitlab.json");
-  writeFileSync(out, JSON.stringify({ at: new Date().toISOString(), gitlab: new URL(url).host, steps }, null, 2));
+  writeFileSync(out, JSON.stringify({ at: new Date().toISOString(), gitlab: new URL(url).host, steps }, null, 2) + "\n");
   await t.close();
 }

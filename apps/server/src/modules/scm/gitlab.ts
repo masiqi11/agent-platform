@@ -3,7 +3,7 @@ import { writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import { addRedactionValue } from "../../core/logger";
 import { askpassEnv } from "./git";
-import { ScmAuthError, ScmNotReady, type AccessCheck, type IssueInfo, type MrInfo, type PipelineInfo, type PipelineStatus, type Scm } from "./types";
+import { ScmAuthError, ScmNotReady, ScmPermissionError, type AccessCheck, type IssueInfo, type MrInfo, type PipelineInfo, type PipelineStatus, type Scm } from "./types";
 
 export interface GitLabRepo {
   /** https://gitlab.example.com/group/project(.git) */
@@ -126,8 +126,11 @@ export function createGitLabScm(
       const prot = pb.status === 200;
       if (!prot) warnings.push(`默认分支 ${defaultBranch} 未受保护：请在 GitLab 中保护它（GIT-补2）`);
       else {
-        const pbb = pb.body as { allow_force_push?: boolean; push_access_levels?: Array<{ access_level?: number }> };
+        const pbb = pb.body as { allow_force_push?: boolean; push_access_levels?: Array<{ access_level?: number }>; merge_access_levels?: Array<{ access_level?: number }> };
         if (pbb.allow_force_push) warnings.push("默认分支允许强推");
+        const mergeLevels = (pbb.merge_access_levels ?? []).map((l) => l.access_level ?? 0).filter((l) => l > 0);
+        if (mergeLevels.length && !mergeLevels.some((l) => l <= level))
+          warnings.push(`令牌（权限等级 ${level}）不在默认分支 ${defaultBranch} 的「允许合并」角色内：合并队列将无法合并，请把「允许合并」设为 Developers + Maintainers（「允许推送」保持 No one）`);
         if ((pbb.push_access_levels ?? []).some((l) => (l.access_level ?? 0) > 0 && (l.access_level ?? 0) <= level)) warnings.push("令牌可直接推送默认分支：平台令牌不应具备绕过保护的权限");
       }
       const me = await api("GET", "/user");
@@ -208,7 +211,16 @@ export function createGitLabScm(
     async mergeMr(iid, sha) {
       let last = "";
       for (let i = 0; i <= retries; i++) {
-        const r = await api("PUT", `/projects/${pid}/merge_requests/${iid}/merge`, { sha, should_remove_source_branch: false });
+        let r: { status: number; body: unknown };
+        try {
+          r = await api("PUT", `/projects/${pid}/merge_requests/${iid}/merge`, { sha, should_remove_source_branch: false });
+        } catch (e) {
+          // GitLab answers 401 (not 403) on the merge endpoint when the user may not merge into the
+          // target branch. If the token still reads the project, it is a permission problem, not a dead token.
+          if (e instanceof ScmAuthError && (await api("GET", `/projects/${pid}`).catch(() => null))?.status === 200)
+            throw new ScmPermissionError("令牌没有合并到目标分支的权限：请在受保护分支设置里把「允许合并」设为包含该令牌的角色（Developer），或由人在 GitLab 合并");
+          throw e;
+        }
         if (r.status >= 200 && r.status < 300) return { mergeCommit: asText((r.body as Json).merge_commit_sha) };
         if (![405, 406, 422].includes(r.status)) ok(r, "合并 MR");
         last = `HTTP ${r.status} ${JSON.stringify((r.body as Json | null)?.message ?? r.body).slice(0, 200)}`;

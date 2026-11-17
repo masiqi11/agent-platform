@@ -25,11 +25,11 @@ S6 要让主场景十步完整闭环：评审 Agent 提意见、开发 Agent 返
 9. **队列推进靠事件，不靠轮询重试**：等待 CI 时作业正常结束；`pipeline.completed` 事件，以及每分钟一次的 sweep 兜底，会重新启动处理，并一直处理到队列为空（TRAP-10）。每个等待都有上限：流水线 30 分钟，GitLab「未就绪」2 小时，超时转人工处理。
 10. **主干变红就暂停（GIT-补4）**：默认分支的流水线失败时，项目设置写入 `mergeQueue.paused`，并通知 Maintainer。同一分支后续流水线变绿时自动恢复，Maintainer 也可以手动恢复。
 11. **冲突不自动处理**：rebase 冲突时列出冲突文件，交给人工处理，并通知 owner 和 Maintainer；后续任务照常合并。由 Agent 处理冲突是 P1。
-12. **GitLab 合并路径**：调用 merge API，带上 head sha 作为条件；405/406/422 有限重试，超时后转人工。没有自建 rebase 步骤，交给 GitLab 项目自身的合并设置。这条路径**未经真实 GitLab 验证**，手动工作流 `gitlab-e2e.yml` 已就绪但尚未运行。
+12. **GitLab 合并路径**：调用 merge API，带上 head sha 作为条件；405/406/422 有限重试，超时后转人工。没有自建 rebase 步骤，交给 GitLab 项目自身的合并设置。2026-11-17 已在本地真实 GitLab CE 17.11 + Runner（docker 执行器）上跑通（`scripts/gitlab-local.sh`，结果 `docs/results/s6-gitlab.json`）。实测发现：GitLab 的合并接口在令牌无权合并到受保护分支时返回 **401** 而不是 403，平台曾因此把仓库误标为「凭据失效」。现已区分：合并返回 401 但令牌仍能读取项目时报「无合并权限」并转人工，仓库保持可用；绑定检查也会在令牌角色不在「允许合并」里时预先告警。平台令牌应为 Developer，受保护分支「允许推送」Maintainers、「允许合并」Developers + Maintainers。
 13. **完成摘要只取记录**：船长发布的完成卡片内容来自合并队列项、发布记录、测试运行和验收标准，不调用模型，所以不可能编造证据（TRAP-15）。
 14. **回滚（GIT-补6）**：已完成的任务可以一键创建「回滚」热修复任务，内容是 `git revert` 合并提交，并同样经过评审、测试和审批。自动回滚是 P2。
 
 ## 后果
 
 - CI 中用脚本模型 + 本地 SCM 跑通主场景十步：后端测试 `s6-main.test.ts`，浏览器测试 `s6-main.spec.ts`。
-- 生产前仍需：在真实 GitLab CE + Runner 上运行 `gitlab-e2e.yml`；用真实模型跑主场景（S8）；由 Agent 处理合并冲突（P1）。
+- 生产前仍需：用真实模型跑主场景（S8）；由 Agent 处理合并冲突（P1）。

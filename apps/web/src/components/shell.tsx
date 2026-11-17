@@ -1,5 +1,6 @@
 import { Link, useNavigate, useRouterState } from "@tanstack/react-router";
 import {
+  BookOpen,
   Activity,
   Cpu,
   GitFork,
@@ -126,6 +127,7 @@ function ActiveProject({ id, name, pkey, collapsed, path }: { id: string; name: 
     { to: `/projects/${id}/agents`, label: "Agent" as MsgKey, icon: Bot, raw: true },
     { to: `/projects/${id}/sessions`, label: "会话" as MsgKey, icon: History, raw: true },
     { to: `/projects/${id}/repos`, label: "仓库" as MsgKey, icon: GitFork, raw: true },
+    { to: `/projects/${id}/knowledge`, label: "知识库" as MsgKey, icon: BookOpen, raw: true },
   ];
   return (
     <div className="py-0.5">

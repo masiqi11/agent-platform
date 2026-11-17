@@ -10,6 +10,21 @@ export async function registerHandlers(s: Services): Promise<void> {
   s.consumers.register(s.quality.consumer);
   s.consumers.register(s.qa.consumer);
   s.consumers.register(s.mergeQueue.consumer);
+  s.consumers.register(s.knowledge.consumer);
+  s.jobs.register(
+    "kb.index",
+    async (p) => {
+      const x = p as { projectId: string; repoId: string; full?: boolean };
+      await s.knowledge.indexRepo({ projectId: x.projectId, repoId: x.repoId, full: Boolean(x.full) });
+    },
+    30 * 60_000,
+  );
+  s.jobs.register("kb.warm", async (p) => {
+    await s.knowledge.indexWarm(String((p as { projectId: string }).projectId));
+  });
+  s.jobs.register("kb.weekly", async () => {
+    await s.knowledge.weekly();
+  });
   s.jobs.register(
     "qa.turn",
     async (p, { job }) => {
@@ -66,5 +81,6 @@ export async function registerHandlers(s: Services): Promise<void> {
     await s.mergeQueue.sweep();
   });
   await s.jobs.enqueue("flow.sweep", {}, { cron: "every:60000", dedupeKey: "cron:flow.sweep" });
+  await s.jobs.enqueue("kb.weekly", {}, { cron: "every:604800000", dedupeKey: "cron:kb.weekly", runAt: new Date(Date.now() + 604_800_000) });
   await s.jobs.enqueue("workspace.sweep", {}, { cron: "every:600000", dedupeKey: "cron:workspace.sweep", runAt: new Date(Date.now() + 60_000) });
 }

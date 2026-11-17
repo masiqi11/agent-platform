@@ -13,6 +13,8 @@ import { createApp } from "../app";
 import { createConfig } from "../config";
 import { loadEnv } from "../env";
 import { createServices } from "../services";
+import { newId } from "../core/ids";
+import { DEMO_EVAL } from "./demo-eval";
 import { BILLING_REPO, PAYMENTS_REPO } from "./demo-repos";
 
 const arg = (k: string) => {
@@ -43,12 +45,15 @@ const PROJECTS = [
 ];
 
 async function main() {
-  const { tenant } = await import("../db/schema");
+  const { evalQuestion, tenant } = await import("../db/schema");
+  const { sql } = await import("drizzle-orm");
   const [ten] = await s.db.root.select().from(tenant).limit(1);
   const ownerToken = ten
     ? await s.identity.signIn(ownerEmail, PASSWORD!)
     : (await req("POST", "/api/v1/setup", undefined, { tenantName: "星河科技（演示）", email: ownerEmail, name: "王晓明", password: PASSWORD })).token;
   const ownerCtx = await s.identity.authenticate(new Headers({ authorization: `Bearer ${ownerToken}` }), "trc_seed");
+  // S7: the deterministic embedding model turns the vector route on without any model key (§8.7).
+  await s.db.root.execute(sql`update tenant set settings = jsonb_set(settings, '{embeddingModel}', '"scripted:embed"') where settings->>'embeddingModel' is null`);
   const existing = await req<Array<{ id: string; key: string }>>("GET", "/api/v1/projects", ownerToken);
   for (const p of PROJECTS) {
     if (existing.some((e) => e.key === p.key)) {
@@ -63,9 +68,15 @@ async function main() {
     ] as const)
       await req("POST", `/api/v1/projects/${proj.id}/agents`, ownerToken, { name, role, instructions: "【演示数据】" });
     const bound = await s.repos.bind(ownerCtx, proj.id, { provider: "local", name: p.repo, files: p.files, testCommand: "bun test" });
+    // KB-补6: the 30-question evaluation set (`bun run kb:eval`).
+    const items = DEMO_EVAL.filter((q) => q.repo === p.repo);
+    await s.db.root
+      .insert(evalQuestion)
+      .values(items.map((q) => ({ id: newId("evq"), tenantId: ownerCtx.tenantId, projectId: proj.id, question: q.question, expectedRefs: q.expect, tags: q.tags ?? ["demo"] })));
     console.log(`${p.key}：项目 ${proj.id}，仓库 ${bound.repo.name}（${bound.check.ok ? "检查通过" : bound.check.detail}）`);
   }
   console.log(`完成。用 ${ownerEmail} 登录；在「支付服务」主群 @船长 说“支付服务最近超时，帮我查一下”。`);
+  console.log("知识库：仓库在后台建索引（server 运行时由任务队列执行）；首页问全局船长“超时相关的计费逻辑在哪个仓库哪个文件”。");
 }
 
 await main()
