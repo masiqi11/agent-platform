@@ -246,7 +246,7 @@ describe("S7 eval set (KB-补6)", () => {
         { at: new Date().toISOString(), model: "scripted (judge) + scripted:embed", k: 5, total: results.length, recall: Number(recall.toFixed(3)), misses: results.filter((r) => !r.hit) },
         null,
         2,
-      ),
+      ) + "\n",
     );
     expect(results).toHaveLength(30);
     expect(recall).toBeGreaterThanOrEqual(0.85);

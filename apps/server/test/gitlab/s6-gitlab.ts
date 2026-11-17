@@ -88,6 +88,6 @@ try {
   mark("no dead jobs", dead.length === 0, dead.map((j) => `${j.type}: ${String(j.lastError).slice(0, 120)}`).join(" | "));
 } finally {
   const out = resolve(import.meta.dir, "../../../../docs/results/s6-gitlab.json");
-  writeFileSync(out, JSON.stringify({ at: new Date().toISOString(), gitlab: new URL(url).host, steps }, null, 2));
+  writeFileSync(out, JSON.stringify({ at: new Date().toISOString(), gitlab: new URL(url).host, steps }, null, 2) + "\n");
   await t.close();
 }

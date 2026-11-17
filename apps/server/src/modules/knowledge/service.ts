@@ -41,6 +41,7 @@ type IndexRow = typeof projectIndex.$inferSelect;
 
 export const KB_PROMPTS = { judge: "kb.judge@1", answer: "kb.answer@1" } as const;
 const CANDIDATES = 30;
+const VECTOR_EF_SEARCH = 400;
 const EMBED_BATCH = 64;
 
 export interface SearchInput {
@@ -381,7 +382,7 @@ export function createKnowledge(d: {
       from document_chunk c join project_index i on i.id = c.index_id
       where i.is_active and c.tombstoned_at is null and c.project_id in ${projectIds}
         and c.tokens @@ to_tsquery('simple', ${tsq})
-      order by score desc limit ${limit}`);
+      order by score desc, c.path, c.start_line, c.id limit ${limit}`);
     return (rows as unknown as { rows: Array<{ id: string; project_id: string; score: number }> }).rows.map((r) => ({ id: r.id, projectId: r.project_id, score: Number(r.score) }));
   }
 
@@ -391,21 +392,30 @@ export function createKnowledge(d: {
     const e = await d.llm.embed(ctx, [query], {});
     if (!e) return { list: [], note: "嵌入不可用（维度不符、出域限制或调用失败），本次跳过向量路" };
     const vec = `[${e.vectors[0]!.join(",")}]`;
-    const rows = await db.root.execute(sql`
+    // HNSW applies the ACL / active-version / tombstone filters after collecting ef_search candidates
+    // (default 40): with other projects' chunks in the graph the real neighbours get cut off, at random.
+    // A wider search keeps recall stable; pgvector ≥ 0.8 iterative scans would also do.
+    const rows = await db.tx(async (q) => {
+      await q.execute(sql`set local hnsw.ef_search = ${sql.raw(String(VECTOR_EF_SEARCH))}`);
+      return q.execute(sql`
       select c.id, c.project_id, 1 - (c.embedding <=> ${vec}::vector) as score
       from document_chunk c join project_index i on i.id = c.index_id
       where i.is_active and c.tombstoned_at is null and c.embedding is not null and c.project_id in ${projectIds}
         and i.embedding_model = ${e.model}
-      order by c.embedding <=> ${vec}::vector limit ${CANDIDATES}`);
+      order by c.embedding <=> ${vec}::vector, c.path, c.start_line, c.id limit ${CANDIDATES}`);
+    });
     const list = (rows as unknown as { rows: Array<{ id: string; project_id: string; score: number }> }).rows
       .map((r) => ({ id: r.id, projectId: r.project_id, score: Number(r.score) }))
       .filter((r) => r.score > 0.05);
     return { list };
   }
 
+  /** Rows in the order of `ids` (rank order): `IN (…)` returns them in no particular order. */
   async function loadChunks(ids: string[]) {
     if (!ids.length) return [];
-    return db.root.select().from(documentChunk).where(inArray(documentChunk.id, ids));
+    const rows = await db.root.select().from(documentChunk).where(inArray(documentChunk.id, ids));
+    const at = new Map(ids.map((id, i) => [id, i]));
+    return rows.sort((a, b) => at.get(a.id)! - at.get(b.id)!);
   }
 
   /**
@@ -522,6 +532,8 @@ export function createKnowledge(d: {
     );
     const why = /为什么|原因|决定|决策|why/i.test(query);
     const qTokens = new Set(tokenize(query).filter((t) => t.length > 1));
+    // Identifiers named in the question (placeOrder, GATEWAY_CALL_TIMEOUT_MS, callGateway) are the strongest signal there is.
+    const qIdents = [...query.matchAll(/[A-Za-z_][A-Za-z0-9_]{3,}/g)].map((m) => m[0].toLowerCase());
     const hits: SearchHit[] = chunkRows.map((c) => {
       const routes = (Object.keys(lists) as KbRoute[]).flatMap((k) => {
         const i = lists[k]!.findIndex((x) => x.id === c.id);
@@ -531,6 +543,12 @@ export function createKnowledge(d: {
       // Rerank: lexical overlap; decisions first for "why" questions (KB-补5); summaries count less (TRAP-3).
       const overlap = [...new Set(tokenize(`${c.path} ${c.symbol ?? ""} ${c.text}`))].filter((t) => qTokens.has(t)).length;
       score += Math.min(overlap, 8) * 0.0015;
+      if (qIdents.length) {
+        const sym = (c.symbol ?? "").toLowerCase();
+        const body = c.text.toLowerCase();
+        if (qIdents.includes(sym)) score += 0.02;
+        else if (qIdents.some((id) => body.includes(id))) score += 0.006;
+      }
       if (c.sourceKind === "decision") score *= why ? 1.6 : 1.1;
       if (c.sourceKind === "summary") score *= 0.6;
       const h = c.repoId ? heads.get(c.repoId) : undefined;
@@ -554,7 +572,8 @@ export function createKnowledge(d: {
         stale: Boolean(c.repoId && h?.head && ixCommit && ixCommit !== h.head),
       };
     });
-    hits.sort((a, b) => b.score - a.score);
+    // Deterministic ties (equal scores are common with short texts) so the eval set is reproducible.
+    hits.sort((a, b) => b.score - a.score || a.path.localeCompare(b.path) || a.startLine - b.startLine);
     return { results: hits.slice(0, input.limit ?? 8), routes: report, allowedProjectIds: ids };
   }
 
