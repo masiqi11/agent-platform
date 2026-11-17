@@ -292,6 +292,14 @@ describe("S5 dev agent — guards", () => {
     expect(scopeGuard({ files: 1, additions: 90, deletions: 20, paths: ["a"] }, s).reasons[0]).toContain("行数");
   });
 
+  test("concurrent mirror syncs of a fresh repo (kb.index + dev.turn right after binding) all succeed", async () => {
+    const r = await t.s.repos.bind(ownerCtx, projectId, { provider: "local", name: "mirror-race", files: { "README.md": "# x\n" } });
+    const row = (await t.s.repos.byId(r.repo.id))!;
+    const dirs = await Promise.all([1, 2, 3, 4].map(() => t.s.workspaces.syncMirror(row)));
+    expect(new Set(dirs).size).toBe(1);
+    expect((await git(["rev-parse", "refs/heads/main"], { cwd: dirs[0]! })).out).toMatch(/^[0-9a-f]{40}$/);
+  });
+
   test("branch naming: a taken branch name gets a suffix (FR-GIT-02)", async () => {
     const tk = await newTask("分支冲突测试");
     const tr = (await t.s.db.root.select().from(task).where(eq(task.id, tk.id)))[0]!;
