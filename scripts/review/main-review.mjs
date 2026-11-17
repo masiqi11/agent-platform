@@ -90,7 +90,8 @@ export async function run(env = process.env, fetcher = fetch) {
     for (const j of failed) {
       const step = j.steps?.find((s) => ["failure", "timed_out"].includes(s.conclusion));
       await publish(
-        `ci:${j.name}:${step?.name ?? j.conclusion}`,
+        // #12: keyed by workflow + job only, so a renamed or different failing step updates the same issue.
+        `ci:${r.name ?? r.workflow_id}:${j.name}`,
         `[CI] ${j.name} / ${step?.name ?? j.conclusion}`.slice(0, 200),
         `main 合入后的 CI 未通过。\n\n- Job：${j.name}\n- 步骤：${step?.name ?? "未提供"}\n- 结果：${j.conclusion}\n- 日志：[查看 Job](${j.html_url})\n\n这是自动化失败记录，尚未确认是代码缺陷还是环境问题。请依据日志复现后归因。`,
       );
