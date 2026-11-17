@@ -21,7 +21,10 @@ async function conversation(model: string, env: Record<string, string>) {
   const owner = (await t.req("POST", "/api/v1/setup", { body: { tenantName: "R", email: "o@r.test", name: "O", password: "Correct-Horse-42" } })).body.token;
   const p = (await t.req("POST", "/api/v1/projects", { token: owner, body: { key: "RP", name: "回放" } })).body;
   const cap = (await t.req("GET", `/api/v1/projects/${p.id}/agents`, { token: owner })).body.find((a: { role: string }) => a.role === "sub_captain");
-  await t.s.db.root.update(agent).set({ modelPolicy: { primary: model } }).where(eq(agent.id, cap.id));
+  await t.s.db.root
+    .update(agent)
+    .set({ modelPolicy: { primary: model } })
+    .where(eq(agent.id, cap.id));
   const { registerHandlers } = await import("../src/modules/registry");
   await registerHandlers(t.s);
   await t.s.consumers.init();
@@ -32,7 +35,12 @@ async function conversation(model: string, env: Record<string, string>) {
     await t.req("POST", `/api/v1/groups/${p.mainGroupId}/messages`, { token: owner, body: { body } });
     await cycle();
   }
-  return (await t.s.db.root.select().from(proposal).where(and(eq(proposal.groupId, p.mainGroupId), eq(proposal.kind, "create_task"))))[0];
+  return (
+    await t.s.db.root
+      .select()
+      .from(proposal)
+      .where(and(eq(proposal.groupId, p.mainGroupId), eq(proposal.kind, "create_task")))
+  )[0];
 }
 
 describe("S8-7 record → replay", () => {
@@ -40,7 +48,10 @@ describe("S8-7 record → replay", () => {
     const recorded = await conversation("scripted:demo", { LLM_RECORD_FILE: file });
     expect(recorded).toBeTruthy();
     expect(existsSync(file)).toBe(true);
-    const lines = readFileSync(file, "utf8").trim().split("\n").map((l) => JSON.parse(l) as { purpose: string; content: string; toolCalls: unknown[] });
+    const lines = readFileSync(file, "utf8")
+      .trim()
+      .split("\n")
+      .map((l) => JSON.parse(l) as { purpose: string; content: string; toolCalls: unknown[] });
     expect(lines.some((l) => l.purpose === "captain.turn")).toBe(true);
     const raw = readFileSync(file, "utf8");
     expect(raw).not.toContain("sk-recorded-secret"); // redacted (a reply may quote what users wrote)
