@@ -199,7 +199,7 @@ export function createHarness(d: { config: Config; db: Database; sandbox: Sandbo
     const specs = d.runtime.toolSpecs(s.st.agent).filter((t) => allowed.has(t.name));
     if (m.method === "tools/list") return reply(m.id, { tools: specs.map((t) => ({ name: t.name, description: t.description, inputSchema: t.parameters })) });
     if (m.method === "tools/call") {
-      const name = String(m.params?.name ?? "");
+      const name = typeof m.params?.name === "string" ? m.params.name : "";
       if (!specs.some((t) => t.name === name)) return reply(m.id, { content: [{ type: "text", text: `工具 ${name} 不可用` }], isError: true });
       const out = await d.runtime.invokeTool(ctx, s.st, { name, arguments: (m.params?.arguments ?? {}) as Record<string, unknown> });
       await d.runtime.recordTurn(s.st.sessionId, { role: "tool", content: JSON.stringify(out).slice(0, 4000), toolCalls: [{ name, arguments: m.params?.arguments ?? {} }] });

@@ -164,6 +164,7 @@ ${tools}`,
 const textOf = (content: unknown): string =>
   typeof content === "string" ? content : Array.isArray(content) ? content.map((c) => (typeof c === "string" ? c : ((c as { text?: string }).text ?? ""))).join("") : "";
 const cut = (s: string, n = 2000) => (s.length > n ? `${s.slice(0, n)}…` : s);
+const str = (v: unknown): string => (typeof v === "string" ? v : v == null ? "" : typeof v === "number" || typeof v === "boolean" ? `${v}` : JSON.stringify(v));
 
 /** Parses one line of an engine's JSON event stream. Unknown lines yield nothing. */
 export function parseLine(engine: Engine, line: string): HarnessEvent[] {
@@ -181,15 +182,15 @@ export function parseLine(engine: Engine, line: string): HarnessEvent[] {
       if (type === "system" && j.subtype === "init" && typeof j.session_id === "string") out.push({ kind: "session", id: j.session_id });
       if (type === "assistant")
         for (const c of ((j.message as { content?: unknown[] })?.content ?? []) as Array<Record<string, unknown>>) {
-          if (c.type === "text" && String(c.text ?? "").trim()) out.push({ kind: "text", text: cut(String(c.text)) });
-          if (c.type === "tool_use") out.push({ kind: "tool", name: String(c.name), input: c.input });
+          if (c.type === "text" && str(c.text ?? "").trim()) out.push({ kind: "text", text: cut(str(c.text)) });
+          if (c.type === "tool_use") out.push({ kind: "tool", name: str(c.name), input: c.input });
         }
       if (type === "user")
         for (const c of ((j.message as { content?: unknown[] })?.content ?? []) as Array<Record<string, unknown>>)
           if (c.type === "tool_result") out.push({ kind: "tool_result", ok: c.is_error !== true, output: cut(textOf(c.content)) });
       if (type === "result") {
-        if (j.is_error === true || (typeof j.subtype === "string" && j.subtype !== "success")) out.push({ kind: "error", message: cut(String(j.result ?? j.subtype)) });
-        else out.push({ kind: "final", text: cut(String(j.result ?? ""), 8000) });
+        if (j.is_error === true || (typeof j.subtype === "string" && j.subtype !== "success")) out.push({ kind: "error", message: cut(str(j.result ?? j.subtype)) });
+        else out.push({ kind: "final", text: cut(str(j.result ?? ""), 8000) });
       }
       break;
     }
@@ -198,12 +199,12 @@ export function parseLine(engine: Engine, line: string): HarnessEvent[] {
       const it = (j.item ?? {}) as Record<string, unknown>;
       if (type === "item.started" && it.type === "command_execution") out.push({ kind: "tool", name: "shell", input: { command: it.command } });
       if (type === "item.completed") {
-        if (it.type === "agent_message") out.push({ kind: "text", text: cut(String(it.text ?? "")) });
-        if (it.type === "command_execution") out.push({ kind: "tool_result", name: "shell", ok: it.exit_code === 0, output: cut(String(it.aggregated_output ?? "")) });
+        if (it.type === "agent_message") out.push({ kind: "text", text: cut(str(it.text ?? "")) });
+        if (it.type === "command_execution") out.push({ kind: "tool_result", name: "shell", ok: it.exit_code === 0, output: cut(str(it.aggregated_output ?? "")) });
         if (it.type === "file_change") out.push({ kind: "tool", name: "apply_patch", input: it.changes });
         if (it.type === "mcp_tool_call") {
-          out.push({ kind: "tool", name: `${String(it.server)}.${String(it.tool)}`, input: it.arguments });
-          out.push({ kind: "tool_result", name: String(it.tool), ok: !it.error, output: cut(JSON.stringify(it.error ?? it.result ?? null)) });
+          out.push({ kind: "tool", name: `${str(it.server)}.${str(it.tool)}`, input: it.arguments });
+          out.push({ kind: "tool_result", name: str(it.tool), ok: !it.error, output: cut(JSON.stringify(it.error ?? it.result ?? null)) });
         }
       }
       if (type === "turn.failed" || type === "error") out.push({ kind: "error", message: cut(JSON.stringify((j.error as unknown) ?? j.message ?? j)) });
@@ -212,26 +213,26 @@ export function parseLine(engine: Engine, line: string): HarnessEvent[] {
     case "opencode": {
       const part = (j.part ?? {}) as Record<string, unknown>;
       if (typeof j.sessionID === "string" && type === "step_start") out.push({ kind: "session", id: j.sessionID });
-      if (type === "text" && String(part.text ?? "").trim()) out.push({ kind: "text", text: cut(String(part.text)) });
+      if (type === "text" && str(part.text ?? "").trim()) out.push({ kind: "text", text: cut(str(part.text)) });
       if (type === "tool_use") {
         const st = (part.state ?? {}) as Record<string, unknown>;
-        out.push({ kind: "tool", name: String(part.tool), input: st.input });
-        out.push({ kind: "tool_result", name: String(part.tool), ok: st.status === "completed", output: cut(String(st.output ?? st.error ?? "")) });
+        out.push({ kind: "tool", name: str(part.tool), input: st.input });
+        out.push({ kind: "tool_result", name: str(part.tool), ok: st.status === "completed", output: cut(str(st.output ?? st.error ?? "")) });
       }
       if (type === "error") out.push({ kind: "error", message: cut(JSON.stringify(j.error ?? j)) });
       break;
     }
     case "pi": {
       if (type === "session" && typeof j.id === "string") out.push({ kind: "session", id: j.id });
-      if (type === "tool_execution_end") out.push({ kind: "tool_result", name: String(j.toolName), ok: j.isError !== true, output: cut(textOf((j.result as { content?: unknown })?.content)) });
+      if (type === "tool_execution_end") out.push({ kind: "tool_result", name: str(j.toolName), ok: j.isError !== true, output: cut(textOf((j.result as { content?: unknown })?.content)) });
       if (type === "message_end") {
         const m = (j.message ?? {}) as Record<string, unknown>;
         if (m.role === "assistant") {
           for (const c of (m.content ?? []) as Array<Record<string, unknown>>) {
-            if (c.type === "text" && String(c.text ?? "").trim()) out.push({ kind: "text", text: cut(String(c.text)) });
-            if (c.type === "toolCall") out.push({ kind: "tool", name: String(c.name), input: c.arguments });
+            if (c.type === "text" && str(c.text ?? "").trim()) out.push({ kind: "text", text: cut(str(c.text)) });
+            if (c.type === "toolCall") out.push({ kind: "tool", name: str(c.name), input: c.arguments });
           }
-          if (m.stopReason === "error" || m.errorMessage) out.push({ kind: "error", message: cut(String(m.errorMessage ?? "模型调用失败")) });
+          if (m.stopReason === "error" || m.errorMessage) out.push({ kind: "error", message: cut(str(m.errorMessage ?? "模型调用失败")) });
         }
       }
       break;
