@@ -166,6 +166,8 @@ interface RawReply {
   toolCalls: ParsedToolCall[];
   /** finish_reason "length": the reply hit max_tokens. */
   truncated?: boolean;
+  /** Some tool call's arguments were not valid JSON. */
+  badArgs?: boolean;
   /** reasoning_content of thinking-mode providers; passed back with the tool history. */
   reasoning?: string;
   tokensIn?: number;
@@ -700,8 +702,9 @@ export function createLlm(d: { config: Config; db: Database; audit: Audit; event
           args = JSON.parse(pc.args || "{}") as Record<string, unknown>;
         } catch {
           // Malformed args → empty; tool validation rejects the call and the caller's fallback applies.
-          log.warn("llm.tool_args_malformed", { model: m.name, tool: pc.name, length: pc.args.length, stream });
+          log.warn("llm.tool_args_malformed", { model: m.name, tool: pc.name, length: pc.args.length, stream, truncated });
           if (stream) malformedStream = true;
+          out.badArgs = true;
         }
         if (pc.name) out.toolCalls.push({ name: pc.name, arguments: args });
       }
@@ -716,7 +719,8 @@ export function createLlm(d: { config: Config; db: Database; audit: Audit; event
     // budget on reasoning — seen live with deepseek-flash at 1024): retry once with a larger budget,
     // instead of reading an empty reply as "the model is done".
     const budget = req.modelPolicy?.maxTokens ?? 1024;
-    if (reply.truncated && !reply.content.trim() && !reply.toolCalls.length && !req.retriedTruncated && budget < 32_768)
+    // Same when the cut-off landed inside a tool call's arguments (S8-7: submit_review at 1024).
+    if (reply.truncated && ((!reply.content.trim() && !reply.toolCalls.length) || reply.badArgs) && !req.retriedTruncated && budget < 32_768)
       return callOpenAi(m, p, key, { ...req, onDelta: undefined, retriedTruncated: true, modelPolicy: { ...req.modelPolicy, maxTokens: Math.min(budget * 4, 32_768) } });
     return reply;
   }

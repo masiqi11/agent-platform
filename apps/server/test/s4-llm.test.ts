@@ -475,4 +475,30 @@ describe("S4 model gateway", () => {
     expect(budgets).toEqual([1024, 4096]);
     expect(r.toolCalls[0]?.name).toBe("write_file");
   });
+  test("S8-7: tool-call arguments cut off by max_tokens are retried with a larger budget, not run as {}", async () => {
+    await provider("参数截断", "openai", [{ name: "ds-args", supportsTools: true, contextWindow: 65536 }]);
+    const budgets: number[] = [];
+    handler = (body) => {
+      budgets.push(body.max_tokens);
+      const args = body.max_tokens <= 1024 ? '{"verdict":"approve","findings":[{"file":"src/gateway.ts","note":"超' : '{"verdict":"approve","findings":[]}';
+      return Response.json({
+        choices: [
+          {
+            message: { role: "assistant", content: "", tool_calls: [{ id: "c1", type: "function", function: { name: "submit_review", arguments: args } }] },
+            finish_reason: body.max_tokens <= 1024 ? "length" : "tool_calls",
+          },
+        ],
+      });
+    };
+    const r = await t.s.llm.complete(ctx, {
+      purpose: "test.args",
+      promptVersion: "p",
+      scope: { projectId },
+      modelPolicy: { primary: "ds-args", maxTokens: 1024 },
+      messages: [{ role: "user", content: "评审" }],
+      tools: [{ name: "submit_review", description: "r", parameters: { type: "object", properties: {} } }],
+    });
+    expect(budgets).toEqual([1024, 4096]);
+    expect(r.toolCalls[0]).toEqual({ name: "submit_review", arguments: { verdict: "approve", findings: [] } });
+  });
 });

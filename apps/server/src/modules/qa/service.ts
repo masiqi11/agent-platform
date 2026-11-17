@@ -270,6 +270,10 @@ export function createQa(d: {
     if (!repo) return { skipped: "no_repo" };
     const ses = await d.runtime.getOrCreateSession(p.tenantId, a, "task", t.id, null);
     if (!(await d.runtime.lease(ses.id))) throw new RetryLater(5_000, "session leased elsewhere");
+    // A review/test conclusion carries a full findings list in one tool call: size the output budget
+    // to the model, as the dev agent does (S8-7: 1024 truncated submit_review's arguments).
+    const qaModel = await d.llm.findModel(p.tenantId, a.modelPolicy.primary ?? (await d.llm.defaultModelName(p.tenantId)));
+    const qaMaxTokens = a.modelPolicy.maxTokens ?? agentMaxTokens(qaModel?.m.contextWindow);
     if (await d.llm.budgetBlocked(p.tenantId, { projectId: t.projectId, taskId: t.id })) {
       await d.runtime.finish(sys, ses, "suspended", "budget_exceeded", { steps: 0, tokens: 0, cost: 0 });
       return { skipped: "budget" };
@@ -395,7 +399,7 @@ export function createQa(d: {
                   : []),
               ],
               tools: lastStep ? tools.filter((x) => x.name === conclude) : tools,
-              modelPolicy: { ...a.modelPolicy, maxTokens: a.modelPolicy.maxTokens ?? agentMaxTokens(undefined) },
+              modelPolicy: { ...a.modelPolicy, maxTokens: qaMaxTokens },
               dataClasses: ["code", "task"],
             });
           } catch (e) {
