@@ -430,12 +430,23 @@ export const searchFirstScript: Script = (req) => {
   };
 };
 
+/**
+ * A reviewer that keeps reading as long as it is allowed (like thorough real models) and only
+ * concludes when submit_review is the sole tool offered: exercises the last-step rule.
+ */
+export const explorerScript: Script = (req) => {
+  if (req.purpose !== "review.turn") return demoScript(req);
+  if (req.toolNames.length === 1 && req.toolNames[0] === "submit_review") return reviewerScript(req);
+  return { content: "再看一下 README。", toolCalls: [{ name: "read_file", arguments: { path: "README.md" } }] };
+};
+
 export const SCRIPTS: Record<string, Script> = {
   demo: demoScript,
   nonsense: nonsenseScript,
   text_tools: textToolsScript,
   rogue: rogueScript,
   search_first: searchFirstScript,
+  explorer: explorerScript,
 };
 
 /** Extra scripts registered by tests. */

@@ -293,6 +293,25 @@ describe("S6 gates and evidence", () => {
     expect((await load(id)).status).toBe("done");
   });
 
+  test("a reviewer that would keep reading forever is made to conclude on its last step", async () => {
+    await setPolicy("auto");
+    await t.s.db.root
+      .update(agent)
+      .set({ modelPolicy: { primary: "scripted:explorer" }, budget: { maxSteps: 3 } })
+      .where(eq(agent.id, ag.reviewer!.id));
+    const id = await manualTask("评审步数上限", { "test/limit.test.ts": 'import { expect, test } from "bun:test";\ntest("ok", () => expect(1).toBe(1));\n' });
+    await settle();
+    const [rv] = await t.s.db.root.select().from(review).where(eq(review.taskId, id));
+    expect(rv?.verdict).toBe("approved"); // concluded on step 3 instead of running out of steps
+    expect((await load(id)).status).not.toBe("in_review");
+    const [ses] = await t.s.db.root
+      .select()
+      .from(session)
+      .where(and(eq(session.agentId, ag.reviewer!.id), eq(session.scopeId, id)));
+    expect(ses!.stopReason).not.toBe("max_steps");
+    await t.s.db.root.update(agent).set({ modelPolicy: {}, budget: {} }).where(eq(agent.id, ag.reviewer!.id));
+  });
+
   test("GIT-补6: a done task offers a rollback task that reverts the merge commit", async () => {
     const [done] = await t.s.db.root
       .select()

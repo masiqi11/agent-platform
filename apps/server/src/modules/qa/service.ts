@@ -306,20 +306,34 @@ export function createQa(d: {
         contextPackage: { policy: { agentId: a.id, toolAllowlist: d.runtime.effectiveTools(a) }, state, layerTokens: { L1: estimateTokens(ctxText) } },
       });
       const convo: ChatMsg[] = [];
-      while (steps < (a.budget.maxSteps ?? QA_MAX_STEPS)) {
+      const limit = a.budget.maxSteps ?? QA_MAX_STEPS;
+      const conclude = p.role === "reviewer" ? "submit_review" : "submit_test_result";
+      for (;;) {
+        if (steps >= limit) {
+          stopReason = "max_steps";
+          break;
+        }
         const cur = (await db.root.select({ s: session.status }).from(session).where(eq(session.id, ses.id)))[0];
         if (cur?.s !== "running") {
           stopReason = "cancelled";
           break;
         }
+        // Thorough models keep reading until the budget runs out: the last step may only conclude.
+        const lastStep = steps === limit - 1;
+        const tools = d.runtime.toolSpecs(a);
         let res;
         try {
           res = await d.llm.complete(actx, {
             purpose: p.role === "reviewer" ? "review.turn" : "test.turn",
             promptVersion: p.role === "reviewer" ? QA_PROMPTS.review : QA_PROMPTS.test,
             scope: { projectId: t.projectId, taskId: t.id, sessionId: ses.id, agentId: a.id },
-            messages: [{ role: "system", content: instructions }, { role: "user", content: ctxText }, ...convo],
-            tools: d.runtime.toolSpecs(a),
+            messages: [
+              { role: "system", content: instructions },
+              { role: "user", content: ctxText },
+              ...convo,
+              ...(lastStep && convo.length ? [{ role: "user" as const, content: `这是本轮最后一步：不要再读取或检索，立即调用 ${conclude} 给出结论（依据已掌握的信息；信息不足就如实写明）。` }] : []),
+            ],
+            tools: lastStep ? tools.filter((x) => x.name === conclude) : tools,
             modelPolicy: a.modelPolicy,
             dataClasses: ["code", "task"],
           });
