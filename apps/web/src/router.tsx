@@ -21,6 +21,7 @@ const ModelsPage = lazy(() => import("@/pages/models").then((m) => ({ default: m
 const SessionsPage = lazy(() => import("@/pages/sessions").then((m) => ({ default: m.SessionsPage })));
 const ReposPage = lazy(() => import("@/pages/repos").then((m) => ({ default: m.ReposPage })));
 const KnowledgePage = lazy(() => import("@/pages/knowledge").then((m) => ({ default: m.KnowledgePage })));
+const ImPage = lazy(() => import("@/pages/im").then((m) => ({ default: m.ImPage })));
 const SystemPage = lazy(() => import("@/pages/system").then((m) => ({ default: m.SystemPage })));
 const AuditPage = lazy(() => import("@/pages/audit").then((m) => ({ default: m.AuditPage })));
 
@@ -149,6 +150,15 @@ const knowledgeRoute = createRoute({
   },
 });
 
+const imRoute = createRoute({
+  getParentRoute: () => projectRoute,
+  path: "/im",
+  component: function Im() {
+    const { projectId } = imRoute.useParams();
+    return <ImPage projectId={projectId} />;
+  },
+});
+
 const routeTree = rootRoute.addChildren([
   loginRoute,
   setupRoute,
@@ -161,7 +171,7 @@ const routeTree = rootRoute.addChildren([
     auditRoute,
     modelsRoute,
     systemRoute,
-    projectRoute.addChildren([projectHomeRoute, chatRoute, agentsRoute, boardRoute, taskRoute, sessionsRoute, reposRoute, knowledgeRoute]),
+    projectRoute.addChildren([projectHomeRoute, chatRoute, agentsRoute, boardRoute, taskRoute, sessionsRoute, reposRoute, knowledgeRoute, imRoute]),
   ]),
 ]);
 

@@ -178,7 +178,11 @@ server { listen 80; server_name agents.example.com; return 301 https://$host$req
 
 全过程可以在任务详情的「代码 / 证据 / 审批」中查看，也可以在「系统状态 → 链路追踪」中用任务 ID 查出整条链路。
 
-## 10. 安装后检查清单
+## 10. 接入钉钉（可选）
+
+在钉钉开放平台创建企业内部应用并添加机器人，消息接收选择 Stream 模式（不需要公网回调地址）。然后在 `deploy/.env` 中填写 `DINGTALK_CLIENT_ID` / `DINGTALK_CLIENT_SECRET` / `DINGTALK_ROBOT_CODE`，并重启。成员绑定身份、群绑定、命令与真机验证清单见 `im.md`。
+
+## 11. 安装后检查清单
 
 - [ ] `MASTER_KEY` 已存入密码库，并且**不和**数据库备份放在一起
 - [ ] 「系统状态」各项为正常：数据库、迁移版本、事件消费、沙箱（无警告）、磁盘
