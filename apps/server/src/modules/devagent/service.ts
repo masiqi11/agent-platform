@@ -10,7 +10,7 @@ import { RetryLater, type createJobs } from "../../core/jobs";
 import { log } from "../../core/logger";
 import type { Config } from "../../config";
 import type { Database } from "../../db";
-import { agent, llmCall, project, review, session, task, workspace } from "../../db/schema";
+import { agent, llmCall, project, review, session, task, testRun, workspace } from "../../db/schema";
 import type { Identity } from "../identity/service";
 import { BudgetExceeded, LlmUnavailable, dropOldestStep, type ChatMsg, type Llm } from "../llm/service";
 import type { Repos } from "../repos/service";
@@ -18,6 +18,7 @@ import { LEASE_MS, type Runtime, type TurnState } from "../runtime/service";
 import { resolveInWorkspace } from "../sandbox/service";
 import { git } from "../scm/service";
 import type { Tasks } from "../tasks/service";
+import type { Harness } from "../harness/service";
 import { SecretDetected, type Workspaces } from "../workspaces/service";
 import { DEV_INSTRUCTIONS, DEV_PROMPTS } from "./prompts";
 
@@ -41,6 +42,9 @@ export interface DevCheckpoint {
   pushedSha?: string | null;
   mr?: string | null;
   next?: string;
+  /** External engine (ADR-0010): its session to continue on rework, and its last summary. */
+  harnessSession?: string | null;
+  harnessSummary?: string;
   /** Short log of side-effect steps across wakes (SES-补3). */
   log?: Array<{ at: string; tool: string; ok: boolean; note?: string }>;
 }
@@ -63,6 +67,7 @@ export function createDevAgent(d: {
   workspaces: Workspaces;
   llm: Llm;
   runtime: Runtime;
+  harness?: Harness;
 }) {
   const { db } = d;
   /** Test hook: throw after a tool to simulate a worker crash mid-turn. */
@@ -447,6 +452,7 @@ export function createDevAgent(d: {
     };
     const [sesRow] = await db.root.select().from(session).where(eq(session.id, ses.id));
     const checkpoint = (sesRow?.checkpoint ?? {}) as DevCheckpoint;
+    if (a.engine !== "builtin" && d.harness) return harnessTurn({ sys, actx, a, t, ses, wsId: ws.id, st, checkpoint, kind: p.kind, prKey: await projectKey(t.projectId) });
     const modelName = a.modelPolicy.primary ?? (await d.llm.defaultModelName(p.tenantId));
     const mdl = await d.llm.findModel(p.tenantId, modelName);
     const budgets = d.runtime.layerBudgets(mdl?.m.contextWindow ?? 8192, a.modelPolicy.maxTokens ?? 1024);
@@ -603,6 +609,130 @@ export function createDevAgent(d: {
         .where(eq(session.id, ses.id));
     }
     return { stopReason, steps, effects: st.effects };
+  }
+
+  /* ───────────── external engine (ADR-0010) ───────────── */
+
+  async function projectKey(projectId: string) {
+    const [pr] = await db.root.select({ key: project.key }).from(project).where(eq(project.id, projectId));
+    return pr?.key ?? "T";
+  }
+
+  /** Rework input for the harness: the open change request, or the latest failed test run on this head. */
+  async function reworkNotes(t: TaskRow, kind: DevWakeKind, head: string) {
+    const out: string[] = [];
+    const rv = await openChangeRequest(t.id, head);
+    if (rv) out.push(`## 评审意见（第 ${rv.round} 轮，需要修改）\n${rv.comments.map((c) => `- ${c.path ? `${c.path}${c.line ? `:${c.line}` : ""}：` : ""}${c.body}`).join("\n")}`);
+    if (kind === "test_failed") {
+      const [tr] = await db.root.select().from(testRun).where(eq(testRun.taskId, t.id)).orderBy(desc(testRun.createdAt)).limit(1);
+      if (tr && tr.status !== "passed") {
+        const bad = tr.criteriaResults.filter((c) => c.verdict !== "met" && c.verdict !== "pass");
+        out.push(`## 测试未通过（第 ${tr.attempt} 次）\n${bad.map((c) => `- ${c.text}：${c.verdict}${c.evidence ? `（${c.evidence.slice(0, 300)}）` : ""}`).join("\n") || "- 见任务评论"}`);
+      }
+    }
+    return out;
+  }
+
+  function harnessPrompt(t: TaskRow, key: string, a: AgentRow, branch: string, testCommand: string, notes: string[]) {
+    return [
+      `你是平台上的开发 Agent「${a.name}」，在任务分支 ${branch} 的工作区里完成下面的任务。`,
+      `# ${key}-${t.number} ${t.title}`,
+      t.description,
+      t.acceptanceCriteria.length ? `## 验收标准\n${t.acceptanceCriteria.map((c) => `- ${c.text}`).join("\n")}` : "",
+      ...notes,
+      [
+        "## 规则",
+        "- 直接修改工作区里的代码，并运行测试确认通过：" + testCommand,
+        "- 不要执行 git commit / push，也不要创建 MR：你结束后由平台提交、推送并开 MR",
+        "- 需要任务信息时用 platform 工具 get_task；遇到需要人决定的问题，用 block_task 写明原因后结束",
+        "- 结束时用几句话总结改了什么、怎么验证的（会作为改动说明和测试计划草案）",
+        a.instructions ? `## 额外要求\n${a.instructions}` : "",
+      ]
+        .filter(Boolean)
+        .join("\n"),
+    ]
+      .filter(Boolean)
+      .join("\n\n");
+  }
+
+  /**
+   * One wake of a dev agent bound to an external engine. The harness only edits the workspace; the
+   * platform drives every side effect through the same tools (and checks) as the built-in loop:
+   * commit → push (secret scan) → MR → wait CI → on success request review, on failure rerun.
+   */
+  async function harnessTurn(o: { sys: Ctx; actx: Ctx; a: AgentRow; t: TaskRow; ses: SessionRow; wsId: string; st: TurnState; checkpoint: DevCheckpoint; kind: DevWakeKind; prKey: string }) {
+    const { sys, actx, a, t, ses, st, checkpoint } = o;
+    const engine = a.engine;
+    const call = (name: string, args: Record<string, unknown> = {}) => d.runtime.invokeTool(actx, st, { name, arguments: args } as ParsedToolCall);
+    let runs = 0;
+    const done = async (stopReason: string, status: "idle" | "suspended" = "idle") => {
+      await d.runtime.recordTurn(ses.id, { role: "effects", content: JSON.stringify(st.effects).slice(0, 4000) });
+      if (await sessionAlive(ses.id)) await d.runtime.finish(sys, ses, status, stopReason, { steps: runs, tokens: 0, cost: 0 });
+      return { stopReason, steps: runs, effects: st.effects };
+    };
+    const block = async (reason: string, stop: string) => {
+      const cur = await loadTask(t.id);
+      if (cur?.status === "in_progress") await d.tasks.transition(actx, t.id, "blocked", { reason: reason.slice(0, 500), needs: "人类 owner" }).catch(() => undefined);
+      return done(stop);
+    };
+    const ws = await d.workspaces.load(o.wsId);
+    const ci = ws.ci as { status: string; sha: string; url?: string } | null;
+    const notes: string[] = [];
+    if (o.kind === "ci_completed") {
+      if (!ci || ci.sha !== ws.headCommit) return done("ci_stale");
+      if (ci.status === "success") {
+        const r = await call("request_review", { summary: checkpoint.harnessSummary || `${engine} 完成了改动，CI 已通过` });
+        return r.ok ? done("review_requested") : block(`提交评审失败：${r.error}`, "request_review_failed");
+      }
+      if (!["failed", "canceled"].includes(ci.status)) return done("waiting_ci");
+      notes.push(`## CI 未通过\n提交 ${ci.sha.slice(0, 8)} 的流水线状态为 ${ci.status}${ci.url ? `（${ci.url}）` : ""}。请在本地运行测试找到原因并修复。`);
+    }
+    const r = (await d.repos.byId(ws.repoId))!;
+    const head = (await git(["rev-parse", "HEAD"], { cwd: ws.worktreePath! })).out;
+    notes.push(...(await reworkNotes(t, o.kind, head)));
+    await d.runtime.recordTurn(ses.id, { role: "context", content: `触发：${o.kind}（执行引擎 ${engine}）` });
+    const res = await d.harness!.run({
+      agent: a,
+      sessionId: ses.id,
+      role: "dev",
+      cwd: ws.worktreePath!,
+      taskId: t.id,
+      workspaceId: ws.id,
+      prompt: harnessPrompt(t, o.prKey, a, ws.branch, d.repos.settingsOf(r).testCommand ?? "bun test", notes),
+      resume: o.kind === "task_assigned" ? null : (checkpoint.harnessSession ?? null),
+      timeoutMs: a.budget.wallClockMs ?? DEV_WALL_MS,
+      maxTurns: a.budget.maxSteps ? a.budget.maxSteps * 3 : undefined,
+    });
+    runs = 1;
+    await cp(st, {
+      harnessSession: res.sessionRef ?? checkpoint.harnessSession ?? null,
+      ...(res.summary ? { harnessSummary: res.summary.slice(0, 2000) } : {}),
+      log: [{ at: new Date().toISOString(), tool: `harness:${engine}`, ok: res.ok, note: `${Math.round(res.durationMs / 1000)}s${res.killed ? " 超时" : ""}` }],
+    });
+    if (!(await sessionAlive(ses.id))) return { stopReason: "cancelled", steps: runs, effects: st.effects };
+    const fresh = await loadTask(t.id);
+    // The harness may have blocked the task itself (block_task over MCP), or a human may have stepped in.
+    if (!fresh || fresh.status !== "in_progress" || fresh.assigneeAgentId !== a.id || fresh.takenOverBy) return done(`task_${fresh?.status ?? "gone"}`);
+    if (!res.ok) {
+      const why = res.killed ? "运行超时" : (res.events.findLast((e) => e.kind === "error") as { message?: string } | undefined)?.message || res.stderrTail.slice(-300) || `退出码 ${res.exitCode}`;
+      return block(`执行引擎 ${engine} 运行失败：${why}`, "harness_failed");
+    }
+    const c = await call("commit", { message: `${o.prKey}-${t.number} ${t.title}\n\n${res.summary.slice(0, 1500)}`.trim() });
+    if (!c.ok) return block(`提交失败：${c.error}`, "commit_failed");
+    const committed = (c.result as { committed: boolean }).committed;
+    const now = await d.workspaces.load(ws.id);
+    const pushed = ((await db.root.select({ c: session.checkpoint }).from(session).where(eq(session.id, ses.id)))[0]?.c as DevCheckpoint | undefined)?.pushedSha;
+    if (!committed && pushed && pushed === (await git(["rev-parse", "HEAD"], { cwd: now.worktreePath! })).out)
+      return block(`执行引擎 ${engine} 结束了，但没有产生新的改动${res.summary ? `。它的说明：${res.summary.slice(0, 300)}` : ""}`, "no_changes");
+    if (!committed && !pushed && (await git(["rev-parse", "HEAD"], { cwd: now.worktreePath! })).out === now.baseCommit)
+      return block(`执行引擎 ${engine} 结束了，但没有改动任何文件${res.summary ? `。它的说明：${res.summary.slice(0, 300)}` : ""}`, "no_changes");
+    const p = await call("push");
+    if (!p.ok) return st.stop === "blocked_secret" ? done("blocked_secret") : block(`推送失败：${p.error}`, "push_failed");
+    if (!now.mrRef) {
+      const m = await call("open_merge_request", { title: `${o.prKey}-${t.number} ${t.title}` });
+      if (!m.ok) return block(`创建 MR 失败：${m.error}`, "mr_failed");
+    }
+    return done("waiting_ci");
   }
 
   async function onBudget(sys: Ctx, a: AgentRow, t: TaskRow, ses: SessionRow, reason: string, usage = { steps: 0, tokens: 0, cost: 0 }) {

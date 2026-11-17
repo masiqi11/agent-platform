@@ -725,7 +725,7 @@ export const agent = pgTable(
     avatar: text(),
     /** Execution engine (ADR-0010): the platform's own loop, or an external coding harness. */
     engine: text().$type<"builtin" | "claude-code" | "codex" | "opencode" | "pi">().notNull().default("builtin"),
-    modelPolicy: jsonb().$type<{ primary?: string; fallback?: string; temperature?: number; maxTokens?: number }>().notNull().default({}),
+    modelPolicy: jsonb().$type<{ primary?: string; fallback?: string; temperature?: number; maxTokens?: number; reasoning?: "low" | "high" | "max" }>().notNull().default({}),
     toolAllowlist: jsonb().$type<string[]>().notNull().default([]),
     mcpServers: jsonb().$type<unknown[]>().notNull().default([]),
     sandboxPolicy: jsonb().$type<Record<string, unknown>>().notNull().default({}),

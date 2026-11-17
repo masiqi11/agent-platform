@@ -12,6 +12,7 @@ export const AgentSchema = t.Object({
   role: t.String(),
   instructions: t.String(),
   modelPolicy: t.Record(t.String(), t.Unknown()),
+  engine: t.String(),
   toolAllowlist: t.Array(t.String()),
   budget: t.Record(t.String(), t.Unknown()),
   maxConcurrency: t.Number(),
@@ -24,7 +25,10 @@ const ModelPolicy = t.Object({
   fallback: t.Optional(t.String()),
   temperature: t.Optional(t.Number({ minimum: 0, maximum: 2 })),
   maxTokens: t.Optional(t.Integer({ minimum: 1 })),
+  /** Reasoning effort, mapped onto each engine's own setting (ADR-0010). */
+  reasoning: t.Optional(t.Union([t.Literal("low"), t.Literal("high"), t.Literal("max")])),
 });
+const Engine = t.Union([t.Literal("builtin"), t.Literal("claude-code"), t.Literal("codex"), t.Literal("opencode"), t.Literal("pi")]);
 const Budget = t.Object({
   maxSteps: t.Optional(t.Integer({ minimum: 1 })),
   maxTokens: t.Optional(t.Integer({ minimum: 1 })),
@@ -35,6 +39,7 @@ const Editable = {
   name: t.String({ minLength: 1, maxLength: 60 }),
   instructions: t.Optional(t.String({ maxLength: 20_000 })),
   modelPolicy: t.Optional(ModelPolicy),
+  engine: t.Optional(Engine),
   toolAllowlist: t.Optional(t.Array(t.String())),
   budget: t.Optional(Budget),
   maxConcurrency: t.Optional(t.Integer({ minimum: 1, maximum: 20 })),
