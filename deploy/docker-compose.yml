@@ -19,14 +19,17 @@ services:
       retries: 20
     restart: unless-stopped
   migrate:
-    build: { context: .., dockerfile: Dockerfile }
+    build: &build
+      context: ..
+      dockerfile: Dockerfile
+      secrets: [build_ca]
     command: ["bun", "apps/server/src/cli/migrate.ts"]
     env_file: .env
     environment:
       DATABASE_URL: postgres://${POSTGRES_USER:-agent}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB:-agent_platform}
     depends_on: { postgres: { condition: service_healthy } }
   app:
-    build: { context: .., dockerfile: Dockerfile }
+    build: *build
     env_file: .env
     environment:
       DATABASE_URL: postgres://${POSTGRES_USER:-agent}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB:-agent_platform}
@@ -61,3 +64,7 @@ services:
     restart: unless-stopped
 volumes:
   pgdata: {}
+secrets:
+  # Optional: CA of a TLS-inspecting proxy, used only while building (bun install). Empty by default.
+  build_ca:
+    file: ${BUILD_CA_FILE:-/dev/null}

@@ -5,7 +5,11 @@ COPY package.json bun.lock turbo.json tsconfig.base.json ./
 COPY apps/server/package.json apps/server/
 COPY apps/web/package.json apps/web/
 COPY packages/shared/package.json packages/shared/
-RUN bun install --frozen-lockfile
+# Behind a TLS-inspecting proxy, pass its CA as a build secret (never stored in the image):
+#   docker compose build  with BUILD_CA_FILE=/path/to/ca.pem in deploy/.env  (see docs/deploy.md)
+RUN --mount=type=secret,id=build_ca \
+  if [ -s /run/secrets/build_ca ]; then export NODE_EXTRA_CA_CERTS=/run/secrets/build_ca; fi; \
+  bun install --frozen-lockfile
 COPY . .
 RUN cd apps/web && bun x vite build
 

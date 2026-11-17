@@ -91,6 +91,8 @@ sudo SANDBOX_NETWORK=ap-sandbox PORT=3000 deploy/sandbox-firewall.sh   # 只放�
 
 ## 4. 启动
 
+如果公司网络的代理会做 TLS 检查，构建时 `bun install` 会报 `SELF_SIGNED_CERT_IN_CHAIN`。这时在 `deploy/.env` 中设置 `BUILD_CA_FILE=<代理 CA 证书路径>`。证书只在构建时通过 BuildKit secret 使用，不会进入镜像。
+
 ```bash
 cd deploy
 docker compose build
