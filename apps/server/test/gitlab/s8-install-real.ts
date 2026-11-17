@@ -109,8 +109,9 @@ try {
   // ── 4: a human confirms in the web console ──
   const acc = await api<{ resultTaskIds: string[] }>("POST", `/proposals/${prp.id}/accept`);
   taskId = acc.resultTaskIds[0]!;
-  let tk0 = await api<{ status: string; assigneeAgentId: string | null }>("GET", `/tasks/${taskId}`);
-  if (!tk0.assigneeAgentId) {
+  type TaskView = { status: string; assignee: { id: string } | null };
+  let tk0 = await api<TaskView>("GET", `/tasks/${taskId}`);
+  if (!tk0.assignee) {
     // Priorities outside the auto-assign policy (e.g. P1) get an assignment proposal: a person confirms it.
     const asg = await until(
       "assignment proposal",
@@ -121,10 +122,10 @@ try {
       3,
     );
     await api("POST", `/proposals/${asg.id}/accept`);
-    tk0 = await api("GET", `/tasks/${taskId}`);
-    mark("4b human confirms the assignment proposal", Boolean(tk0.assigneeAgentId), asg.payload.agentName ?? "");
+    tk0 = await api<TaskView>("GET", `/tasks/${taskId}`);
+    mark("4b human confirms the assignment proposal", Boolean(tk0.assignee), asg.payload.agentName ?? "");
   }
-  mark("4 human accepts → task created and assigned", Boolean(taskId && tk0.assigneeAgentId), `status ${tk0.status}`);
+  mark("4 human accepts → task created and assigned", Boolean(taskId && tk0.assignee), `status ${tk0.status}`);
 
   // ── 5–8: dev fixes, MR + GitLab CI, review, test; status changes logged as they happen ──
   let last = "";
