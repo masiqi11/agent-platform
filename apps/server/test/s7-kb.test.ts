@@ -10,6 +10,7 @@ import type { Ctx } from "../src/core/context";
 import { newId } from "../src/core/ids";
 import { decision, documentChunk, job, projectIndex, tenant } from "../src/db/schema";
 import { hasLexicalEvidence } from "../src/modules/knowledge/service";
+import { embedPrefix } from "../src/modules/llm/service";
 import { git } from "../src/modules/scm/service";
 import { createTestApp, type TestApp } from "./helpers";
 
@@ -251,5 +252,47 @@ describe("S7 eval set (KB-补6)", () => {
     expect(results).toHaveLength(30);
     expect(recall).toBeGreaterThanOrEqual(0.85);
     rmSync(tmp, { recursive: true, force: true });
+  });
+});
+
+describe("S7 embedding model administration (§8.7)", () => {
+  test("only registered 768-d embedding models can be selected; switching rebuilds every index, warm layer included", async () => {
+    const bad = await t.req("POST", "/api/v1/admin/models/providers", {
+      token: owner,
+      body: { name: "错维度", baseUrl: "http://127.0.0.1:9", dialect: "ollama", isExternal: false, models: [{ name: "big-embed", embeddingDim: 1024 }] },
+    });
+    expect(bad.status).toBe(400);
+    expect((await t.req("PUT", "/api/v1/admin/models/embedding", { token: owner, body: { name: "scripted:demo" } })).status).toBe(400); // a chat model
+    expect((await t.req("PUT", "/api/v1/admin/models/embedding", { token: outsider, body: { name: null } })).status).toBe(403);
+
+    const before = new Map((await t.s.db.root.select().from(projectIndex).where(eq(projectIndex.isActive, true))).map((i) => [i.repoId ?? `warm:${i.projectId}`, i.version]));
+    const off = await t.req("PUT", "/api/v1/admin/models/embedding", { token: owner, body: { name: null } });
+    expect(off.body).toMatchObject({ embeddingModel: null, changed: true });
+    expect(off.body.rebuildQueued).toBeGreaterThan(0);
+    for (let i = 0; i < 20; i++) if (!(await t.s.consumers.drain()) && !(await t.s.jobs.drain())) break;
+    const r = await t.s.knowledge.search(ownerCtx, { query: "支付回调如何验签", projectIds: [P.PAY!.id] });
+    expect(r.routes.vector).toMatchObject({ enabled: false, note: expect.stringContaining("未配置嵌入模型") });
+
+    const on = await t.req("PUT", "/api/v1/admin/models/embedding", { token: owner, body: { name: "scripted:embed" } });
+    expect(on.body).toMatchObject({ embeddingModel: "scripted:embed", changed: true });
+    for (let i = 0; i < 20; i++) if (!(await t.s.consumers.drain()) && !(await t.s.jobs.drain())) break;
+    const after = await t.s.db.root.select().from(projectIndex).where(eq(projectIndex.isActive, true));
+    for (const ix of after) {
+      expect(ix.embeddingModel).toBe("scripted:embed"); // warm layer label follows the model too
+      if (ix.repoId) expect(ix.version).toBeGreaterThan(before.get(ix.repoId)!); // full rebuild, alias switched
+    }
+    const back = await t.s.knowledge.search(ownerCtx, { query: "支付回调如何验签", projectIds: [P.PAY!.id] });
+    expect(back.routes.vector.enabled).toBe(true);
+    expect(back.routes.vector.candidates).toBeGreaterThan(0);
+    // Selecting the same model again is a no-op.
+    expect((await t.req("PUT", "/api/v1/admin/models/embedding", { token: owner, body: { name: "scripted:embed" } })).body).toMatchObject({ changed: false, rebuildQueued: 0 });
+  });
+
+  test("asymmetric models get their query / document prefixes", () => {
+    expect(embedPrefix("nomic-embed-text", "query")).toBe("search_query: ");
+    expect(embedPrefix("nomic-embed-text:v1.5", "document")).toBe("search_document: ");
+    expect(embedPrefix("embeddinggemma", "query")).toBe("task: search result | query: ");
+    expect(embedPrefix("embeddinggemma:300m", "document")).toBe("title: none | text: ");
+    expect(embedPrefix("scripted:embed", "query")).toBe("");
   });
 });
