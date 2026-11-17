@@ -56,6 +56,8 @@ export const serverSchema = {
   LLM_EMBEDDING_MODEL: z.string().optional(),
   /** Wire APIs the bootstrap endpoint accepts for the harness proxy, e.g. "chat,responses,messages". */
   LLM_APIS: z.string().optional(),
+  /** Bearer token for GET /metrics (Prometheus). Unset: /metrics is open outside production, off in production. */
+  METRICS_TOKEN: z.string().min(16).optional(),
   /** ADR-0010: the platform as seen from inside the sandbox (model proxy + MCP); default http://127.0.0.1:PORT. */
   HARNESS_PLATFORM_URL: z.string().optional(),
   /** Executables for the harness engines (default: the command name on PATH). */

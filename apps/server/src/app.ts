@@ -8,6 +8,7 @@ import { expectedMigration } from "./db/migrate";
 import { DomainError } from "./core/errors";
 import { newId } from "./core/ids";
 import { log } from "./core/logger";
+import { metrics } from "./core/metrics";
 import { traceIdOf } from "./http";
 import { auditRoutes } from "./routes/audit";
 import { identityRoutes } from "./routes/identity";
@@ -21,6 +22,7 @@ import { codeRoutes } from "./routes/code";
 import { qualityRoutes } from "./routes/quality";
 import { llmProxyRoutes } from "./routes/llm-proxy";
 import { mcpRoutes } from "./routes/mcp";
+import { opsRoutes } from "./routes/ops";
 import { knowledgeRoutes } from "./routes/knowledge";
 import type { Services } from "./services";
 
@@ -46,14 +48,28 @@ function validationDetails(err: ValidationError): Array<{ path: string; message:
   return out.length ? out : [{ path: "", message: err.message.slice(0, 200) }];
 }
 
+/**
+ * Path → route label when the router didn't report a template: id-like segments (platform ids,
+ * numbers, hashes, tokens) become `:id`, static assets one label, so label cardinality stays bounded.
+ */
+export function routeOf(path: string): string {
+  if (!path.startsWith("/api/") && !["/metrics", "/healthz", "/readyz", "/mcp", "/ws"].includes(path) && !path.startsWith("/llm/")) return "static";
+  return path
+    .split("/")
+    .map((seg) => (/^[a-z]{2,5}_[0-9a-z]{10,}$/i.test(seg) || /^\d+$/.test(seg) || /^[0-9a-f]{12,}$/i.test(seg) || seg.length > 40 ? ":id" : seg))
+    .join("/");
+}
+
 /** Builds the HTTP app. Composition only: no business logic here (§5.2). */
 export function createApp(s: Services) {
   const webDist = s.config.dirs.webDist;
   const cors = new Set(s.config.trustedOrigins);
 
+  const started = new WeakMap<Request, number>();
   const app = new Elysia()
     .use(websocket())
     .onRequest(({ request, set }) => {
+      started.set(request, performance.now());
       const traceId = traceIdOf(request);
       set.headers["x-request-id"] = traceId;
       set.headers["x-content-type-options"] = "nosniff";
@@ -71,6 +87,15 @@ export function createApp(s: Services) {
           return new Response(null, { status: 204, headers: set.headers as Record<string, string> });
         }
       }
+    })
+    // §16.1 request count + latency by route template (never the raw path: ids would explode cardinality).
+    .onAfterResponse(({ request, set, route }) => {
+      const t0 = started.get(request);
+      if (t0 === undefined) return;
+      const labels = { method: request.method, route: route || routeOf(new URL(request.url).pathname) };
+      const status = typeof set.status === "number" ? set.status : 200;
+      metrics.http.requests.inc({ ...labels, status: String(status) });
+      metrics.http.duration.observe(labels, (performance.now() - t0) / 1000);
     })
     .onError(({ error, request, set }) => {
       const traceId = traceIdOf(request);
@@ -135,6 +160,7 @@ export function createApp(s: Services) {
     .use(knowledgeRoutes(s))
     .use(llmProxyRoutes(s))
     .use(mcpRoutes(s))
+    .use(opsRoutes(s))
     .ws("/ws", {
       maxPayloadLength: 64 * 1024,
       idleTimeout: 120,

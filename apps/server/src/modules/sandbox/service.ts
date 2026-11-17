@@ -4,6 +4,7 @@ import { join } from "node:path";
 import { newId } from "../../core/ids";
 import { log } from "../../core/logger";
 import type { Config } from "../../config";
+import { metrics } from "../../core/metrics";
 
 /** Output kept in the result per stream (SBX-06); the full log (up to LOG_CAP) goes to the object store. */
 export const OUTPUT_CAP = 1_000_000;
@@ -266,7 +267,16 @@ export function createDockerSandbox(cfg: { image?: string; runtime?: string; tim
 }
 
 export function createSandbox(config: Config): Sandbox {
-  return config.sandbox.kind === "docker" ? createDockerSandbox(config.sandbox) : createProcessSandbox(config.sandbox.timeoutMs);
+  const sb = config.sandbox.kind === "docker" ? createDockerSandbox(config.sandbox) : createProcessSandbox(config.sandbox.timeoutMs);
+  // §16.1: sandbox executions and timeouts.
+  const exec = sb.exec.bind(sb);
+  sb.exec = async (req) => {
+    const r = await exec(req);
+    metrics.sandbox.runs.inc({ kind: sb.kind, outcome: r.killed ? "timeout" : r.code === 0 ? "ok" : "failed" });
+    metrics.sandbox.duration.observe({ kind: sb.kind }, r.durationMs / 1000);
+    return r;
+  };
+  return sb;
 }
 
 /** Runs a host-side command (git etc.) — NOT a sandbox: used by the control plane only. */
