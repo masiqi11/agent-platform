@@ -22,6 +22,10 @@ export type HarnessEvent =
   | { kind: "final"; text: string }
   | { kind: "error"; message: string };
 
+export type Reasoning = "low" | "high" | "max";
+/** Codex has no "max": its highest effort is xhigh. */
+const CODEX_EFFORT: Record<Reasoning, string> = { low: "low", high: "high", max: "xhigh" };
+
 export interface PrepareInput {
   engine: Engine;
   role: HarnessRole;
@@ -37,6 +41,8 @@ export interface PrepareInput {
   resume?: string | null;
   /** Executable to run (defaults to the engine's usual command name). */
   bin?: string;
+  /** Reasoning effort (agent modelPolicy.reasoning), mapped onto the engine's own setting. */
+  reasoning?: Reasoning;
 }
 
 export interface Prepared {
@@ -78,6 +84,7 @@ export function prepare(i: PrepareInput): Prepared {
           `--allowedTools ${q(allowed.join(","))}`,
           `--disallowedTools ${q(disallowed.join(","))}`,
           `--max-turns ${i.maxTurns}`,
+          ...(i.reasoning ? [`--effort ${i.reasoning}`] : []),
           '--mcp-config "$HOME/.platform/mcp.json" --strict-mcp-config',
           ...(i.resume ? [`--resume ${q(i.resume)}`] : []),
         ].join(" "),
@@ -92,7 +99,7 @@ export function prepare(i: PrepareInput): Prepared {
         cmd: [i.bin ?? "codex", "exec", ...(i.resume ? ["resume", q(i.resume)] : []), "--json --skip-git-repo-check", q(i.prompt), "< /dev/null"].join(" "),
         files: {
           ".codex/config.toml": `model = ${JSON.stringify(i.model)}
-model_provider = "platform"
+${i.reasoning ? `model_reasoning_effort = "${CODEX_EFFORT[i.reasoning]}"\n` : ""}model_provider = "platform"
 approval_policy = "never"
 sandbox_mode = ${JSON.stringify(readOnly ? "read-only" : "workspace-write")}
 
@@ -128,7 +135,9 @@ ${tools}`,
         autoupdate: false,
       };
       return {
-        cmd: [i.bin ?? "opencode", "run", "--format json", ...(i.resume ? [`--session ${q(i.resume)}`] : []), q(i.prompt), "< /dev/null"].join(" "),
+        cmd: [i.bin ?? "opencode", "run", "--format json", ...(i.reasoning ? [`--variant ${i.reasoning}`] : []), ...(i.resume ? [`--session ${q(i.resume)}`] : []), q(i.prompt), "< /dev/null"].join(
+          " ",
+        ),
         files: { ".platform/opencode.json": JSON.stringify(config, null, 2) },
         env: { OPENCODE_CONFIG: "$HOME/.platform/opencode.json", OPENCODE_DISABLE_AUTOUPDATE: "1" },
       };
@@ -141,7 +150,9 @@ ${tools}`,
           "--provider platform",
           `--model ${q(i.model)}`,
           "--mode json",
-          i.resume ? `--session-dir "$HOME/.pi/sessions" --continue` : `--session-dir "$HOME/.pi/sessions"`,
+          ...(i.reasoning ? [`--thinking ${i.reasoning}`] : []),
+          `--session-dir "$HOME/.pi/sessions"`,
+          ...(i.resume ? [`--session ${q(i.resume)}`] : []),
           `--tools ${q(tools)}`,
           "-p",
           q(i.prompt),

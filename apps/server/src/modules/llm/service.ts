@@ -247,6 +247,25 @@ function redactDeep(v: unknown): unknown {
 
 const jsonError = (status: number, message: string) => Response.json({ error: { type: "platform_proxy_error", message } }, { status });
 
+/**
+ * Rebuilds an OpenAI chat completion as the stream a client asked for: one content chunk, one
+ * complete chunk per tool call (index = position), then finish + usage and [DONE].
+ */
+export function chatCompletionAsSse(j: Record<string, unknown>): string {
+  const ch = ((j.choices as unknown[]) ?? [])[0] as
+    | { message?: { role?: string; content?: string | null; reasoning_content?: string; tool_calls?: Array<Record<string, unknown>> }; finish_reason?: string }
+    | undefined;
+  const msg = ch?.message ?? {};
+  const base = { id: j.id ?? "chatcmpl-proxy", object: "chat.completion.chunk", created: j.created ?? Math.floor(Date.now() / 1000), model: j.model };
+  const chunk = (delta: Record<string, unknown>, extra: Record<string, unknown> = {}) => `data: ${JSON.stringify({ ...base, choices: [{ index: 0, delta, finish_reason: null, ...extra }] })}\n\n`;
+  let out = chunk({ role: "assistant", content: "" });
+  if (msg.reasoning_content) out += chunk({ reasoning_content: msg.reasoning_content });
+  if (msg.content) out += chunk({ content: msg.content });
+  for (const [i, tc] of (msg.tool_calls ?? []).entries()) out += chunk({ tool_calls: [{ index: i, ...tc }] });
+  out += `data: ${JSON.stringify({ ...base, choices: [{ index: 0, delta: {}, finish_reason: ch?.finish_reason ?? "stop" }], ...(j.usage ? { usage: j.usage } : {}) })}\n\n`;
+  return `${out}data: [DONE]\n\n`;
+}
+
 export function createLlm(d: { config: Config; db: Database; audit: Audit; events: Events; identity: Identity; vault: Vault }, opts: LlmOptions = {}) {
   const { db } = d;
   const timeoutMs = opts.timeoutMs ?? Number(process.env.LLM_TIMEOUT_MS ?? 180_000);
@@ -1130,9 +1149,15 @@ export function createLlm(d: { config: Config; db: Database; audit: Audit; event
     await ensureDefaults(ctx.tenantId);
     const cands = (await candidates(ctx.tenantId, input.policy)).filter((c) => c.p.kind === "openai_compatible" && supportsApi(c.p, api));
     if (!cands.length) return jsonError(400, `没有可用的模型：需要支持 ${api} 接口的供应商`);
-    const stream = input.body.stream === true;
+    // Chat streams are fetched whole and re-streamed: relays interleave parallel tool-call fragments
+    // under one index (ADR-0009 #2), which no client can untangle; their non-streamed answers are right.
+    const synth = input.body.stream === true && api === "chat";
+    const stream = input.body.stream === true && !synth;
     const body = redactDeep(input.body) as Record<string, unknown>;
-    if (stream && api === "chat") body.stream_options = { ...(body.stream_options as object), include_usage: true };
+    if (synth) {
+      body.stream = false;
+      delete body.stream_options;
+    }
     const estIn = estimateTokens(JSON.stringify(body));
     const estOut = Number(body.max_tokens ?? body.max_output_tokens ?? 4096);
     const reasons: string[] = [];
@@ -1201,6 +1226,7 @@ export function createLlm(d: { config: Config; db: Database; audit: Audit; event
         const json = (await res.json()) as Record<string, unknown>;
         const u = usageOf(api, json);
         await settle(u.tin ?? estIn, u.tout ?? 0, "ok");
+        if (synth) return new Response(chatCompletionAsSse(json), { status: 200, headers: { "content-type": "text/event-stream", "cache-control": "no-cache" } });
         return Response.json(json);
       }
       // Streaming: pass bytes through untouched, read usage from the SSE events on the way.

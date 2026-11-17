@@ -92,6 +92,7 @@ export function createHarness(d: { config: Config; db: Database; sandbox: Sandbo
       maxTurns: o.maxTurns ?? 60,
       resume: o.resume,
       bin: d.config.harness.bins[engine],
+      reasoning: o.agent.modelPolicy.reasoning,
     });
     const home = join(o.cwd, ".sandbox-home");
     for (const [rel, content] of Object.entries(prep.files)) {

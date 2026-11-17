@@ -50,6 +50,18 @@ describe("harness adapters: configuration", () => {
     expect(prepare({ engine: "pi", role: "reviewer", ...base }).cmd).not.toMatch(/--tools '[^']*(edit|write|bash)/);
     expect(prepare({ engine: "pi", role: "tester", ...base }).cmd).toMatch(/--tools '[^']*bash/);
   });
+  test("reasoning level maps onto each engine's own setting; resume continues the engine session", () => {
+    expect(prepare({ engine: "claude-code", role: "dev", ...base, reasoning: "max" }).cmd).toContain("--effort max");
+    expect(prepare({ engine: "codex", role: "dev", ...base, reasoning: "max" }).files[".codex/config.toml"]).toContain('model_reasoning_effort = "xhigh"');
+    expect(prepare({ engine: "opencode", role: "dev", ...base, reasoning: "low" }).cmd).toContain("--variant low");
+    expect(prepare({ engine: "pi", role: "dev", ...base, reasoning: "high" }).cmd).toContain("--thinking high");
+    for (const e of ENGINES)
+      expect(`${prepare({ engine: e, role: "dev", ...base }).cmd}${prepare({ engine: e, role: "dev", ...base }).files[".codex/config.toml"] ?? ""}`).not.toMatch(/effort|variant|thinking/);
+    expect(prepare({ engine: "claude-code", role: "dev", ...base, resume: "s1" }).cmd).toContain("--resume 's1'");
+    expect(prepare({ engine: "codex", role: "dev", ...base, resume: "s1" }).cmd).toContain("exec resume 's1'");
+    expect(prepare({ engine: "opencode", role: "dev", ...base, resume: "s1" }).cmd).toContain("--session 's1'");
+    expect(prepare({ engine: "pi", role: "dev", ...base, resume: "s1" }).cmd).toContain("--session 's1'");
+  });
   test("prompts with quotes survive the shell", () => {
     const p = prepare({ engine: "pi", role: "dev", ...base, prompt: 'it\'s "quoted" $HOME `x`' });
     expect(p.cmd).toContain(`'it'\\''s "quoted" $HOME \`x\`'`);

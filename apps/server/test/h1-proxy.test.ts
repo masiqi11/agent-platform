@@ -29,6 +29,38 @@ beforeAll(async () => {
       seen.push({ path, body, headers: Object.fromEntries(req.headers.entries()) });
       const stream = body.stream === true;
       if (path === "/v1/chat/completions") {
+        if (stream && JSON.stringify(body.messages).includes("parallel"))
+          // Two parallel calls, fragments labelled index 0 and interleaved (a real relay's behaviour) — never reached: the proxy asks non-streamed.
+          return new Response(
+            sse([
+              { choices: [{ delta: { tool_calls: [{ index: 0, id: "c_a", type: "function", function: { name: "read", arguments: "" } }] } }] },
+              { choices: [{ delta: { tool_calls: [{ index: 0, id: "c_b", type: "function", function: { name: "read", arguments: "" } }] } }] },
+              { choices: [{ delta: { tool_calls: [{ index: 0, id: "c_a", function: { arguments: '{"path":' } }] } }] },
+              { choices: [{ delta: { tool_calls: [{ index: 0, id: "c_b", function: { arguments: '{"path":' } }] } }] },
+              { choices: [{ delta: { tool_calls: [{ index: 0, id: "c_a", function: { arguments: '"a.ts"}' } }] } }] },
+              { choices: [{ delta: { tool_calls: [{ index: 0, id: "c_b", function: { arguments: '"b.ts"}' } }] } }] },
+              { choices: [{ finish_reason: "tool_calls", delta: {} }], usage: { prompt_tokens: 5, completion_tokens: 5 } },
+            ]),
+            { headers: { "content-type": "text/event-stream" } },
+          );
+        if (!stream && JSON.stringify(body.messages).includes("parallel"))
+          return Response.json({
+            id: "c2",
+            choices: [
+              {
+                finish_reason: "tool_calls",
+                message: {
+                  role: "assistant",
+                  content: null,
+                  tool_calls: [
+                    { id: "c_a", type: "function", function: { name: "read", arguments: '{"path":"a.ts"}' } },
+                    { id: "c_b", type: "function", function: { name: "read", arguments: '{"path":"b.ts"}' } },
+                  ],
+                },
+              },
+            ],
+            usage: { prompt_tokens: 5, completion_tokens: 5 },
+          });
         if (!stream) return Response.json({ id: "c1", choices: [{ message: { role: "assistant", content: "ok" } }], usage: { prompt_tokens: 120, completion_tokens: 8 } });
         return new Response(sse([{ choices: [{ delta: { content: "o" } }] }, { choices: [{ delta: { content: "k" } }] }, { choices: [], usage: { prompt_tokens: 90, completion_tokens: 2 } }]), {
           headers: { "content-type": "text/event-stream" },
@@ -116,15 +148,27 @@ describe("H1 harness model proxy", () => {
     expect(row).toMatchObject({ purpose: "harness.dev", model: "real-model", tokensIn: 120, tokensOut: 8, status: "ok", toolMode: "harness", taskId: "tsk_fake_for_proxy", projectId });
   });
 
-  test("chat streaming passes the SSE bytes through and meters the final usage chunk", async () => {
-    const r = await call("/chat/completions", { model: "x", stream: true, messages: [{ role: "user", content: "hi" }] }, { authorization: `Bearer ${token}` });
+  test("chat streaming: fetched whole upstream, re-streamed to the harness, metered from the upstream usage", async () => {
+    const r = await call("/chat/completions", { model: "x", stream: true, stream_options: { include_usage: true }, messages: [{ role: "user", content: "hi" }] }, { authorization: `Bearer ${token}` });
     expect(r.headers.get("content-type")).toContain("text/event-stream");
     const text = await r.text();
-    expect(text).toContain('"content":"o"');
+    expect(text).toContain('"content":"ok"');
+    expect(text).toContain('"usage":{"prompt_tokens":120');
     expect(text).toContain("[DONE]");
-    expect(seen.at(-1)!.body.stream_options).toMatchObject({ include_usage: true });
-    await Bun.sleep(50);
-    expect(await lastCall()).toMatchObject({ tokensIn: 90, tokensOut: 2 });
+    expect(seen.at(-1)!.body.stream).toBe(false);
+    expect(seen.at(-1)!.body.stream_options).toBeUndefined();
+    expect(await lastCall()).toMatchObject({ tokensIn: 120, tokensOut: 8 });
+  });
+
+  test("chat streaming: parallel tool calls reach the harness whole, one index per call (relays interleave them when streaming)", async () => {
+    const r = await call("/chat/completions", { model: "x", stream: true, messages: [{ role: "user", content: "parallel" }] }, { authorization: `Bearer ${token}` });
+    const args: Record<number, string> = {};
+    for (const l of (await r.text()).split("\n")) {
+      if (!l.startsWith("data:") || l.includes("[DONE]")) continue;
+      for (const tc of (JSON.parse(l.slice(5)) as { choices: Array<{ delta?: { tool_calls?: Array<{ index: number; function?: { arguments?: string } }> } }> }).choices[0]?.delta?.tool_calls ?? [])
+        args[tc.index] = (args[tc.index] ?? "") + (tc.function?.arguments ?? "");
+    }
+    expect(args).toEqual({ 0: '{"path":"a.ts"}', 1: '{"path":"b.ts"}' });
   });
 
   test("Anthropic messages via x-api-key (Claude Code): forwarded with the upstream key; cache reads count as input", async () => {
