@@ -66,6 +66,8 @@ export const EVENT_TYPES = [
   "credential.changed",
   "index.updated",
   "issue.synced",
+  // §1.3 metric "知识库回答带有效引用": counts only, never the answer (INV-13).
+  "kb.answered",
 ] as const;
 export type EventType = (typeof EVENT_TYPES)[number];
 
