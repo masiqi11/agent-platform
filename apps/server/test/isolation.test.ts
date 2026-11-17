@@ -1,7 +1,7 @@
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { signupGrant } from "../src/auth";
 import { eq } from "drizzle-orm";
-import { decision, modelProvider, question, repo, session, tenant, deadLetter } from "../src/db/schema";
+import { binding, decision, externalIdentity, modelProvider, question, repo, session, tenant, deadLetter } from "../src/db/schema";
 import { newId } from "../src/core/ids";
 import { createTestApp, type TestApp } from "./helpers";
 
@@ -74,6 +74,11 @@ beforeAll(async () => {
   await t.s.db.root.insert(deadLetter).values({ id: fixtures["dead-letters"], tenantId: tA, source: "job", refId: newId("job"), payload: { type: "x" }, error: "机密错误", attempts: 1 });
   fixtures.repos = newId("rep");
   await t.s.db.root.insert(repo).values({ id: fixtures.repos, tenantId: tA, projectId: proj.body.id, name: "iso", provider: "local", externalId: "iso.git", url: "/nonexistent/iso.git" });
+  // S9: an IM binding and an IM identity of tenant A.
+  fixtures.bindings = newId("bnd");
+  await t.s.db.root.insert(binding).values({ id: fixtures.bindings, tenantId: tA, provider: "dingtalk", externalChatId: "cid-iso", groupId: proj.body.mainGroupId, createdBy: meA.principalId });
+  fixtures["external-identities"] = newId("xid");
+  await t.s.db.root.insert(externalIdentity).values({ id: fixtures["external-identities"], tenantId: tA, provider: "dingtalk", externalUserId: "staff-iso", userId: meA.userId });
   // Tenant B (second tenant created directly; self-host normally has one).
   const tb = newId("ten");
   await t.s.db.root.insert(tenant).values({ id: tb, name: "B", domain: "b.test" });

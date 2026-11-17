@@ -34,6 +34,7 @@ const p = Bun.spawn(["bun", "src/main.ts"], {
     DATA_DIR: dataDir,
     SANDBOX: "process",
     AUTH_SIGNUP_MODE: "invite",
+    IM_MOCK: "true",
     ...(process.env.E2E_EXTRA ? JSON.parse(process.env.E2E_EXTRA) : {}),
   },
 });

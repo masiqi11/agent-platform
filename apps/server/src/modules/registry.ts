@@ -12,6 +12,14 @@ export async function registerHandlers(s: Services): Promise<void> {
   s.consumers.register(s.qa.consumer);
   s.consumers.register(s.mergeQueue.consumer);
   s.consumers.register(s.knowledge.consumer);
+  s.consumers.register(s.im.consumer);
+  // §12.3 IM gateway: inbound events and outbound deliveries are jobs (retries, dead letters).
+  s.jobs.register("im.inbound", async (p, { job }) => {
+    await s.im.handleInbound(p as unknown as Parameters<typeof s.im.handleInbound>[0], job.traceId ?? job.id);
+  });
+  s.jobs.register("im.deliver", async (p, { job }) => {
+    await s.im.deliver(String((p as { deliveryId: string }).deliveryId), job);
+  });
   s.jobs.register(
     "kb.index",
     async (p) => {

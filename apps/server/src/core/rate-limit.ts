@@ -8,6 +8,8 @@ export const RATE_LIMITS = {
   search: { limit: 120, windowMs: 60_000 },
   agent_trigger: { limit: 60, windowMs: 60_000 },
   agent_token: { limit: 600, windowMs: 60_000 },
+  // IM-补1: bind codes typed into a DM — few tries per IM account.
+  im_bind: { limit: 5, windowMs: 15 * 60_000 },
 } as const;
 export type RateCategory = keyof typeof RATE_LIMITS;
 

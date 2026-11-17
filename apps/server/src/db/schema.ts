@@ -110,7 +110,7 @@ export const principal = pgTable(
     tenantId: text()
       .notNull()
       .references(() => tenant.id),
-    kind: text().$type<"human" | "agent" | "system">().notNull(),
+    kind: text().$type<"human" | "agent" | "system" | "external">().notNull(),
     refId: text(),
     displayName: text().notNull(),
     createdAt: createdAt(),
@@ -411,23 +411,45 @@ export const binding = pgTable(
     groupId: text().notNull(),
     mode: text().$type<"at_only" | "passive">().notNull().default("at_only"),
     status: text().$type<"active" | "invalid">().notNull().default("active"),
+    /** Name of the external chat, for display only. */
+    chatTitle: text(),
+    /** IM-补8 quiet hours / summary cap, mirroring of human Web messages. */
+    settings: jsonb().$type<BindingSettings>().notNull().default({}),
+    invalidReason: text(),
+    invalidatedAt: ts(),
     createdBy: text().notNull(),
     createdAt: createdAt(),
+    updatedAt: updatedAt(),
   },
   (t) => [uniqueIndex("binding_provider_chat_uq").on(t.provider, t.externalChatId)],
 );
 
-export const outboundDelivery = pgTable("outbound_delivery", {
-  id: text().primaryKey(),
-  tenantId: text().notNull(),
-  bindingId: text().notNull(),
-  messageId: text().notNull(),
-  status: text().$type<"pending" | "sent" | "failed" | "dead" | "stopped">().notNull().default("pending"),
-  attempts: integer().notNull().default(0),
-  lastError: text(),
-  nextAttemptAt: ts(),
-  createdAt: createdAt(),
-});
+export type BindingSettings = {
+  /** Local "HH:MM" window (Asia/Shanghai unless tz is set); unsolicited mirrors wait until it ends. */
+  quietHours?: { start: string; end: string; tz?: string } | null;
+  /** At most one summary card per this many minutes (default 60). */
+  summaryMinIntervalMin?: number;
+  /** Also mirror human messages written in the Web console (default off). */
+  mirrorHumans?: boolean;
+};
+
+export const outboundDelivery = pgTable(
+  "outbound_delivery",
+  {
+    id: text().primaryKey(),
+    tenantId: text().notNull(),
+    bindingId: text().notNull(),
+    messageId: text().notNull(),
+    status: text().$type<"pending" | "sent" | "failed" | "dead" | "stopped" | "skipped">().notNull().default("pending"),
+    attempts: integer().notNull().default(0),
+    lastError: text(),
+    nextAttemptAt: ts(),
+    externalMessageId: text(),
+    sentAt: ts(),
+    createdAt: createdAt(),
+  },
+  (t) => [uniqueIndex("outbound_delivery_binding_message_uq").on(t.bindingId, t.messageId)],
+);
 
 /* ───────────── tasks & flow ───────────── */
 export type AcceptanceCriterion = { id: string; text: string; verdict?: "met" | "unmet" | "na"; note?: string };

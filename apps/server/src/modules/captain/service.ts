@@ -80,7 +80,7 @@ export function heuristicSummary(prev: SummaryContent | null, msgs: MessageView[
   const out = prev ? (JSON.parse(JSON.stringify(prev)) as SummaryContent) : emptySummary();
   const add = (k: (typeof SECTIONS)[number], m: MessageView) => {
     const text = m.body
-      .replace(/@\S+\s*/g, "")
+      .replace(/@(?:"[^"\n]*"|“[^”\n]*”|\S+)\s*/g, "")
       .replace(/\s+/g, " ")
       .trim()
       .slice(0, 60);
@@ -733,7 +733,7 @@ export function createCaptain(d: CaptainDeps) {
       }
     } else if (!proposed && !asked && (isExplicitRequest(trigger.body) || p.kind === "answer")) {
       const base = requestMsg && p.kind === "answer" ? requestMsg.body : trigger.body;
-      const clean = base.replace(/@\S+\s*/g, "").trim();
+      const clean = base.replace(/@(?:"[^"\n]*"|“[^”\n]*”|\S+)\s*/g, "").trim();
       const title = (clean.split("\n")[0] ?? clean).replace(/^(请|帮我|麻烦|帮忙)\s*/, "").slice(0, 40) || "新任务";
       const criteria = parseAcceptanceCriteria(`${base}\n${p.kind === "answer" ? trigger.body : ""}`);
       const description = p.kind === "answer" ? `${clean}\n\n补充信息：${trigger.body}` : clean;
