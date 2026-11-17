@@ -27,6 +27,7 @@ import { createSandbox, type Sandbox } from "./modules/sandbox/service";
 import { createRepos } from "./modules/repos/service";
 import { createWorkspaces } from "./modules/workspaces/service";
 import { createDevAgent } from "./modules/devagent/service";
+import { createHarness } from "./modules/harness/service";
 import { createDelivery } from "./modules/delivery/service";
 import { createSystem } from "./modules/system/service";
 import { createQuality } from "./modules/quality/service";
@@ -84,11 +85,12 @@ export function createServices(config: Config, opts: ServiceOptions = {}) {
   const sandbox = opts.sandbox ?? createSandbox(config);
   const repos = createRepos({ config, db, audit, events, identity, projects, vault, fetch: opts.scmFetch });
   const workspaces = createWorkspaces({ config, db, audit, events, identity, repos, sandbox, objectStore, jobs });
-  const devAgent = createDevAgent({ config, db, audit, events, jobs, identity, tasks, repos, workspaces, llm, runtime });
+  const harness = createHarness({ config, db, sandbox, runtime, llm });
+  const devAgent = createDevAgent({ config, db, audit, events, jobs, identity, tasks, repos, workspaces, llm, runtime, harness });
   const delivery = createDelivery({ config, db, audit, events, jobs, identity, repos, workspaces });
   const system = createSystem({ db, identity, sandbox, workspaces, jobs });
   const quality = createQuality({ db, audit, events, identity, tasks, approvals, repos });
-  const qa = createQa({ db, audit, events, jobs, identity, tasks, repos, workspaces, quality, llm, runtime, sandbox, objectStore });
+  const qa = createQa({ db, audit, events, jobs, identity, tasks, repos, workspaces, quality, llm, runtime, sandbox, objectStore, harness });
   const mergeQueue = createMergeQueue({ config, db, audit, events, jobs, identity, tasks, repos, workspaces, delivery, quality, inbox });
   quality.hooks.enqueueMerge = (ctx, t, sha) => mergeQueue.enqueue(ctx, t, sha);
   quality.hooks.dequeue = (ctx, taskId, reason) => mergeQueue.dequeue(ctx, taskId, reason);
@@ -126,6 +128,7 @@ export function createServices(config: Config, opts: ServiceOptions = {}) {
     repos,
     workspaces,
     devAgent,
+    harness,
     delivery,
     system,
     quality,

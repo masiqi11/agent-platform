@@ -183,6 +183,19 @@ export function createRuntime(d: { config: Config; db: Database; audit: Audit; e
     });
   }
 
+  /**
+   * Token a harness uses for the model proxy and the platform MCP server (ADR-0010): bound to this
+   * agent and session, revoked when the agent is paused or its token version bumped; lives as long
+   * as the harness may run.
+   */
+  function harnessToken(a: AgentRow, sessionId: string, ttlSec: number): string {
+    return signAgentToken(
+      d.config.jwt.secret,
+      { tenant_id: a.tenantId, agent_id: a.id, session_id: sessionId, project_scope: a.projectId ? [a.projectId] : [], tool_scope: effectiveTools(a), token_version: a.tokenVersion },
+      ttlSec,
+    );
+  }
+
   /** Agent ctx via a real scoped token through identity.authenticate (token scope = effective tools). */
   async function agentCtx(a: AgentRow, sessionId: string, traceId: string): Promise<Ctx> {
     const token = signAgentToken(
@@ -367,6 +380,7 @@ export function createRuntime(d: { config: Config; db: Database; audit: Audit; e
 
   return {
     registerTool,
+    harnessToken,
     toolSpecs,
     effectiveTools,
     invokeTool,

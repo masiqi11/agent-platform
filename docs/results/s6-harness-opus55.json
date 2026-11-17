@@ -1,0 +1,101 @@
+{
+  "at": "2026-11-17T06:21:21.416Z",
+  "model": "claude-opus-5-5",
+  "engines": {
+    "dev": "opencode",
+    "reviewer": "builtin",
+    "tester": "claude-code"
+  },
+  "endpoint": "sub.foxnio.com",
+  "minutes": 3.4,
+  "steps": [
+    {
+      "step": "agents",
+      "ok": true,
+      "ms": 975,
+      "note": "小码=opencode 审审=builtin 测测=claude-code"
+    },
+    {
+      "step": "bind demo repo (bun test fails on main: the timeout bug)",
+      "ok": true,
+      "ms": 1021
+    },
+    {
+      "step": "task → in_progress",
+      "ok": true,
+      "ms": 85531
+    },
+    {
+      "step": "task → in_review",
+      "ok": true,
+      "ms": 87620
+    },
+    {
+      "step": "task → testing",
+      "ok": true,
+      "ms": 153249
+    },
+    {
+      "step": "task → done",
+      "ok": true,
+      "ms": 201433
+    },
+    {
+      "step": "merged by the queue",
+      "ok": true,
+      "ms": 201434,
+      "note": "merged "
+    },
+    {
+      "step": "fix on main",
+      "ok": true,
+      "ms": 201448,
+      "note": "+export const GATEWAY_CALL_TIMEOUT_MS = 3_000; // 必须小于上游网关的 5s，否则请求会一直挂到上游断开才失败"
+    },
+    {
+      "step": "reviews",
+      "ok": true,
+      "ms": 201452,
+      "note": "approved(0 条)"
+    },
+    {
+      "step": "test runs",
+      "ok": true,
+      "ms": 201452,
+      "note": "passed"
+    },
+    {
+      "step": "no dead jobs",
+      "ok": true,
+      "ms": 201452
+    }
+  ],
+  "calls": {
+    "total": 23,
+    "ok": 23,
+    "models": [
+      "claude-opus-5-5"
+    ],
+    "byPurpose": {
+      "harness.dev": {
+        "n": 10,
+        "ok": 10,
+        "avgMs": 8240,
+        "tokensOut": 719
+      },
+      "review.turn": {
+        "n": 8,
+        "ok": 8,
+        "avgMs": 7927,
+        "tokensOut": 639
+      },
+      "harness.tester": {
+        "n": 5,
+        "ok": 5,
+        "avgMs": 6769,
+        "tokensOut": 721
+      }
+    }
+  },
+  "failures": []
+}

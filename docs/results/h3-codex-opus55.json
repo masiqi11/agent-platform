@@ -1,0 +1,28 @@
+{
+  "engine": "codex",
+  "durationS": 119,
+  "status": "in_review",
+  "blockedReason": null,
+  "stopReason": "review_requested",
+  "mr": "!1",
+  "ci": {
+    "sha": "b290269d5c9f84d315bc9ab650fb3fea97991212",
+    "status": "success",
+    "finishedAt": "2026-11-17T06:23:37.108Z",
+    "pipelineId": "lsp_01a1e82cde2c000n01nw9ta"
+  },
+  "timeoutLine": "GATEWAY_CALL_TIMEOUT_MS = 3_000",
+  "summary": "**根因**：`src/gateway.ts` 中 `GATEWAY_CALL_TIMEOUT_MS` 被设为 30_000 ms，而上游网关在 5s 就主动断开连接。调用侧的超时反而更长，请求会一直挂起 30s 才失败，这就是用户\"等待很久后失败\"的原因。\n\n**改动**：\n- `src/gateway.ts:4-5` — 调用网关超时从 `30_000` 改为 `3_000`（小于上游 `UPSTREAM_GATEWAY_TIMEOUT_MS = 5_000`），并把 FIXME 注释换成说明性注释。\n- `README.md` — 更新原先\"已知问题\"的描述，改为记录该问题已修复。\n\n**验证**：\n- `bun test` 全部通过（4 pass / 0 fail），包括 `gateway.test.ts` 中\"our timeout is shorter than the ups",
+  "turns": 24,
+  "mcpCalls": [
+    "get_task",
+    "search_knowledge",
+    "shell"
+  ],
+  "llm": {
+    "calls": 3,
+    "failed": 0,
+    "tokensIn": 37919,
+    "tokensOut": 520
+  }
+}

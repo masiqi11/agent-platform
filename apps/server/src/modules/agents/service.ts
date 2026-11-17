@@ -21,6 +21,8 @@ export interface AgentInput {
   role: AgentRole;
   instructions?: string;
   modelPolicy?: AgentRow["modelPolicy"];
+  /** Execution engine (ADR-0010): the built-in loop or an external harness. */
+  engine?: AgentRow["engine"];
   toolAllowlist?: string[];
   budget?: AgentRow["budget"];
   maxConcurrency?: number;
@@ -39,6 +41,7 @@ export function createAgents(d: { db: Database; audit: Audit; events: Events; id
     role: a.role as string,
     instructions: a.instructions,
     modelPolicy: a.modelPolicy as Record<string, unknown>,
+    engine: a.engine as string,
     toolAllowlist: a.toolAllowlist,
     budget: a.budget as Record<string, unknown>,
     maxConcurrency: a.maxConcurrency,
@@ -68,7 +71,14 @@ export function createAgents(d: { db: Database; audit: Audit; events: Events; id
     return a;
   }
 
+  /** External harnesses run code-work roles only; captains stay on the built-in loop (ADR-0010). */
+  function checkEngine(role: string, engine: AgentRow["engine"] | undefined) {
+    if (engine && engine !== "builtin" && !["dev", "reviewer", "tester"].includes(role))
+      throw invalid("只有开发、评审、测试 Agent 可以绑定外部执行引擎", [{ path: "/engine", message: "船长使用内置引擎" }]);
+  }
+
   async function create(ctx: Ctx, projectId: string, input: AgentInput) {
+    checkEngine(input.role, input.engine);
     await d.projects.assertWritable(ctx, projectId);
     await d.identity.require(ctx, "agent.manage", { projectId });
     if (input.role === "captain") throw invalid("全局船长在租户层配置", [{ path: "/role", message: "项目内不可创建全局船长" }]);
@@ -85,6 +95,7 @@ export function createAgents(d: { db: Database; audit: Audit; events: Events; id
         role: input.role,
         instructions: input.instructions ?? "",
         modelPolicy: input.modelPolicy ?? {},
+        engine: input.engine ?? "builtin",
         toolAllowlist: input.toolAllowlist ?? DEFAULT_TOOLS[input.role],
         budget: input.budget ?? {},
         maxConcurrency: input.maxConcurrency ?? 3,
@@ -103,6 +114,7 @@ export function createAgents(d: { db: Database; audit: Audit; events: Events; id
   async function update(ctx: Ctx, id: string, patch: Partial<Omit<AgentInput, "role">>) {
     const a = await get(ctx, id);
     await d.identity.require(ctx, "agent.manage", { projectId: a.projectId });
+    checkEngine(a.role, patch.engine);
     await db.tx(async (q) => {
       await q
         .update(agent)
@@ -110,6 +122,7 @@ export function createAgents(d: { db: Database; audit: Audit; events: Events; id
           name: patch.name ?? a.name,
           instructions: patch.instructions ?? a.instructions,
           modelPolicy: patch.modelPolicy ?? a.modelPolicy,
+          engine: patch.engine ?? a.engine,
           toolAllowlist: patch.toolAllowlist ?? a.toolAllowlist,
           budget: patch.budget ?? a.budget,
           maxConcurrency: patch.maxConcurrency ?? a.maxConcurrency,
@@ -126,7 +139,7 @@ export function createAgents(d: { db: Database; audit: Audit; events: Events; id
         resourceType: "agent",
         resourceId: id,
         projectId: a.projectId,
-        before: { name: a.name, modelPolicy: a.modelPolicy, toolAllowlist: a.toolAllowlist, budget: a.budget },
+        before: { name: a.name, engine: a.engine, modelPolicy: a.modelPolicy, toolAllowlist: a.toolAllowlist, budget: a.budget },
         after: patch,
       });
     });

@@ -1,0 +1,81 @@
+{
+  "type": "diff",
+  "version": "9",
+  "dialect": "postgres",
+  "id": "cace06b5-a6e0-452c-bbea-69970d5443d9",
+  "prevIds": [
+    "08e6e6df-2eb7-4129-9ba4-f92de5cb6ac8"
+  ],
+  "footprints": [
+    {
+      "statementType": "add_column",
+      "statementTarget": [
+        "column",
+        "public",
+        "agent",
+        "engine"
+      ],
+      "writes": [
+        "s|col|public.agent.engine",
+        "n|col|public.agent.engine",
+        "e|col|public.agent.engine"
+      ],
+      "reads": [
+        "n|tbl|public.agent",
+        "n|sch|public"
+      ]
+    },
+    {
+      "statementType": "add_column",
+      "statementTarget": [
+        "column",
+        "public",
+        "model_provider",
+        "apis"
+      ],
+      "writes": [
+        "s|col|public.model_provider.apis",
+        "n|col|public.model_provider.apis",
+        "e|col|public.model_provider.apis"
+      ],
+      "reads": [
+        "n|tbl|public.model_provider",
+        "n|sch|public"
+      ]
+    }
+  ],
+  "deltas": [
+    {
+      "op": "create",
+      "row": {
+        "schema": "public",
+        "table": "agent",
+        "name": "engine",
+        "type": "text",
+        "typeSchema": null,
+        "notNull": true,
+        "dimensions": 0,
+        "default": "'builtin'",
+        "generated": null,
+        "identity": null,
+        "entityType": "columns"
+      }
+    },
+    {
+      "op": "create",
+      "row": {
+        "schema": "public",
+        "table": "model_provider",
+        "name": "apis",
+        "type": "jsonb",
+        "typeSchema": null,
+        "notNull": true,
+        "dimensions": 0,
+        "default": "'[\"chat\"]'",
+        "generated": null,
+        "identity": null,
+        "entityType": "columns"
+      }
+    }
+  ]
+}

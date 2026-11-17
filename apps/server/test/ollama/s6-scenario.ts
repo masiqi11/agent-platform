@@ -2,9 +2,12 @@
  * Main scenario steps 4–8 (§22.2) driven by a REAL model on the local demo repo (manual; NOT CI):
  * task → dev agent reproduces + fixes the timeout bug → push → MR → CI → reviewer → (rework) →
  * tester → merge queue → done. Every agent uses the tenant's default model (the bootstrap one).
+ * Each agent can run on an external engine (ADR-0010): DEV_ENGINE / REVIEWER_ENGINE / TESTER_ENGINE
+ * = claude-code | codex | opencode | pi (binaries via HARNESS_*_BIN; LLM_APIS lists the wire APIs
+ * the endpoint speaks, e.g. chat,responses,messages).
  *
  *   TEST_DATABASE_URL=… LLM_BASE_URL=https://…/v1 LLM_MODEL=… LLM_API_KEY=… RESULT=s6-<name> \
- *     bun test/ollama/s6-scenario.ts
+ *     [DEV_ENGINE=opencode TESTER_ENGINE=claude-code LLM_APIS=chat,messages] bun test/ollama/s6-scenario.ts
  *
  * Writes docs/results/$RESULT.json: task transitions, per-purpose model calls, failures, and
  * whether each agent's work came from the model or a deterministic fallback.
@@ -40,6 +43,10 @@ const t = await createTestApp("s6real", {
   LLM_TIMEOUT_MS: "240000",
   LLM_FIRST_BYTE_MS: "200000",
 });
+const engines = { dev: process.env.DEV_ENGINE ?? "builtin", reviewer: process.env.REVIEWER_ENGINE ?? "builtin", tester: process.env.TESTER_ENGINE ?? "builtin" };
+// External engines reach the platform (model proxy + MCP) over HTTP.
+const server = Bun.serve({ port: 0, fetch: (req) => t.app.handle(req), idleTimeout: 0 });
+t.s.config.harness.platformUrl = `http://127.0.0.1:${server.port}`;
 let taskId = "";
 try {
   const setup = await t.req("POST", "/api/v1/setup", { body: { tenantName: "Real", email: "o@r.test", name: "王负责人", password: "Correct-Horse-42" } });
@@ -49,9 +56,10 @@ try {
   const projectId = p.body.id as string;
   // No human approval step in this run: the gate + merge queue decide once review and tests pass.
   await t.s.db.root.execute(sql`update project set settings = settings || ${JSON.stringify({ mergePolicy: "auto" })}::jsonb where id = ${projectId}`);
-  const dev = (await t.req("POST", `/api/v1/projects/${projectId}/agents`, { token: owner, body: { name: "开发 · 小码", role: "dev" } })).body;
-  await t.req("POST", `/api/v1/projects/${projectId}/agents`, { token: owner, body: { name: "评审 · 审审", role: "reviewer" } });
-  await t.req("POST", `/api/v1/projects/${projectId}/agents`, { token: owner, body: { name: "测试 · 测测", role: "tester" } });
+  const dev = (await t.req("POST", `/api/v1/projects/${projectId}/agents`, { token: owner, body: { name: "开发 · 小码", role: "dev", engine: engines.dev } })).body;
+  await t.req("POST", `/api/v1/projects/${projectId}/agents`, { token: owner, body: { name: "评审 · 审审", role: "reviewer", engine: engines.reviewer } });
+  await t.req("POST", `/api/v1/projects/${projectId}/agents`, { token: owner, body: { name: "测试 · 测测", role: "tester", engine: engines.tester } });
+  mark("agents", Boolean(dev.id), `小码=${engines.dev} 审审=${engines.reviewer} 测测=${engines.tester}`);
   const bound = await t.s.repos.bind(ctx, projectId, { provider: "local", name: "payments", files: PAYMENTS_REPO, testCommand: "bun test" });
   mark("bind demo repo (bun test fails on main: the timeout bug)", bound.check.ok);
   const tk = await t.req("POST", "/api/v1/tasks", {
@@ -115,6 +123,7 @@ try {
   const out = {
     at: new Date().toISOString(),
     model: MODEL,
+    engines,
     endpoint: new URL(BASE).host,
     minutes: Number(((Date.now() - t0) / 60000).toFixed(1)),
     steps,
@@ -124,6 +133,7 @@ try {
   writeFileSync(resolve(import.meta.dir, `../../../../docs/results/${RESULT}.json`), `${JSON.stringify(out, null, 2)}\n`);
   console.log(JSON.stringify(out.calls, null, 2));
   if (out.failures.length) console.log("failures:", JSON.stringify(out.failures.slice(0, 8), null, 2));
+  void server.stop(true);
   await t.close();
   rmSync(dataDir, { recursive: true, force: true });
 }

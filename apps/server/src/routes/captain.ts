@@ -49,6 +49,7 @@ export const captainRoutes = (s: Services) =>
           dialect: t.Union([t.Literal("openai"), t.Literal("ollama")]),
           isExternal: t.Boolean(),
           apiKey: t.Optional(t.String({ maxLength: 500 })),
+          apis: t.Optional(t.Array(t.Union([t.Literal("chat"), t.Literal("responses"), t.Literal("messages")]), { maxItems: 3 })),
           models: t.Array(
             t.Object({
               name: t.String({ minLength: 1, maxLength: 120 }),

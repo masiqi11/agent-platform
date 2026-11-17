@@ -723,7 +723,9 @@ export const agent = pgTable(
     role: text().$type<"captain" | "sub_captain" | "dev" | "reviewer" | "tester">().notNull(),
     instructions: text().notNull().default(""),
     avatar: text(),
-    modelPolicy: jsonb().$type<{ primary?: string; fallback?: string; temperature?: number; maxTokens?: number }>().notNull().default({}),
+    /** Execution engine (ADR-0010): the platform's own loop, or an external coding harness. */
+    engine: text().$type<"builtin" | "claude-code" | "codex" | "opencode" | "pi">().notNull().default("builtin"),
+    modelPolicy: jsonb().$type<{ primary?: string; fallback?: string; temperature?: number; maxTokens?: number; reasoning?: "low" | "high" | "max" }>().notNull().default({}),
     toolAllowlist: jsonb().$type<string[]>().notNull().default([]),
     mcpServers: jsonb().$type<unknown[]>().notNull().default([]),
     sandboxPolicy: jsonb().$type<Record<string, unknown>>().notNull().default({}),
@@ -799,6 +801,8 @@ export const modelProvider = pgTable("model_provider", {
   /** Wire dialect for openai_compatible providers: plain OpenAI chat/completions, or Ollama's native /api/chat (think:false). */
   dialect: text().$type<"openai" | "ollama">().notNull().default("openai"),
   isExternal: boolean().notNull().default(true),
+  /** Wire APIs the endpoint accepts, for the harness model proxy (ADR-0010): passthrough only to a matching API. */
+  apis: jsonb().$type<Array<"chat" | "responses" | "messages">>().notNull().default(["chat"]),
   status: text().notNull().default("active"),
   circuitState: jsonb().$type<{ state: "closed" | "open" | "half_open"; failures: number; openedAt?: string }>().notNull().default({ state: "closed", failures: 0 }),
   createdAt: createdAt(),

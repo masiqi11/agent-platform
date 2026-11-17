@@ -19,6 +19,8 @@ import { agentRoutes } from "./routes/agents";
 import { captainRoutes } from "./routes/captain";
 import { codeRoutes } from "./routes/code";
 import { qualityRoutes } from "./routes/quality";
+import { llmProxyRoutes } from "./routes/llm-proxy";
+import { mcpRoutes } from "./routes/mcp";
 import { knowledgeRoutes } from "./routes/knowledge";
 import type { Services } from "./services";
 
@@ -131,6 +133,8 @@ export function createApp(s: Services) {
     .use(codeRoutes(s))
     .use(qualityRoutes(s))
     .use(knowledgeRoutes(s))
+    .use(llmProxyRoutes(s))
+    .use(mcpRoutes(s))
     .ws("/ws", {
       maxPayloadLength: 64 * 1024,
       idleTimeout: 120,

@@ -1,4 +1,4 @@
-import { resolve } from "node:path";
+import { join, resolve } from "node:path";
 import type { Env } from "./env";
 
 export interface Config {
@@ -27,7 +27,9 @@ export interface Config {
   s3: { endpoint: string; region: string; bucket: string; accessKey: string; secretKey: string } | null;
   maxUploadMb: number;
   sandbox: { kind: "process" | "docker"; image?: string; runtime?: string; timeoutMs: number };
-  llmBootstrap: { baseUrl: string; apiKey?: string; model: string; embeddingModel?: string } | null;
+  /** External harness engines (ADR-0010). */
+  harness: { platformUrl: string; bins: Partial<Record<"claude-code" | "codex" | "opencode" | "pi", string>>; passEnv: Record<string, string>; cacheDir: string };
+  llmBootstrap: { baseUrl: string; apiKey?: string; model: string; embeddingModel?: string; apis?: Array<"chat" | "responses" | "messages"> } | null;
   demoMode: boolean;
   agentsPaused: boolean;
   dingtalk: { clientId: string; clientSecret: string; robotCode?: string } | null;
@@ -83,7 +85,41 @@ export function createConfig(env: Env, cwd = process.cwd()): Config {
         : null,
     maxUploadMb: env.MAX_UPLOAD_MB,
     sandbox: { kind: env.SANDBOX ?? (isProd ? "docker" : "process"), image: env.SANDBOX_IMAGE, runtime: env.SANDBOX_RUNTIME, timeoutMs: env.SANDBOX_TIMEOUT_MS },
-    llmBootstrap: env.LLM_BASE_URL && env.LLM_MODEL ? { baseUrl: env.LLM_BASE_URL, apiKey: env.LLM_API_KEY, model: env.LLM_MODEL, embeddingModel: env.LLM_EMBEDDING_MODEL } : null,
+    harness: {
+      platformUrl: env.HARNESS_PLATFORM_URL ?? `http://127.0.0.1:${env.PORT}`,
+      bins: Object.fromEntries(
+        (
+          [
+            ["claude-code", env.HARNESS_CLAUDE_CODE_BIN],
+            ["codex", env.HARNESS_CODEX_BIN],
+            ["opencode", env.HARNESS_OPENCODE_BIN],
+            ["pi", env.HARNESS_PI_BIN],
+          ] as const
+        ).filter(([, v]) => Boolean(v)),
+      ) as Partial<Record<"claude-code" | "codex" | "opencode" | "pi", string>>,
+      passEnv: Object.fromEntries(
+        (env.HARNESS_PASS_ENV ?? "")
+          .split(",")
+          .map((k) => k.trim())
+          .filter((k) => k && process.env[k] !== undefined)
+          .map((k) => [k, process.env[k]!]),
+      ),
+      cacheDir: join(data, "harness-cache"),
+    },
+    llmBootstrap:
+      env.LLM_BASE_URL && env.LLM_MODEL
+        ? {
+            baseUrl: env.LLM_BASE_URL,
+            apiKey: env.LLM_API_KEY,
+            model: env.LLM_MODEL,
+            embeddingModel: env.LLM_EMBEDDING_MODEL,
+            apis: env.LLM_APIS
+              ? (env.LLM_APIS.split(",")
+                  .map((x) => x.trim())
+                  .filter((x) => x === "chat" || x === "responses" || x === "messages") as Array<"chat" | "responses" | "messages">)
+              : undefined,
+          }
+        : null,
     demoMode: env.DEMO_MODE,
     agentsPaused: env.AGENTS_PAUSED,
     dingtalk: env.DINGTALK_CLIENT_ID && env.DINGTALK_CLIENT_SECRET ? { clientId: env.DINGTALK_CLIENT_ID, clientSecret: env.DINGTALK_CLIENT_SECRET, robotCode: env.DINGTALK_ROBOT_CODE } : null,

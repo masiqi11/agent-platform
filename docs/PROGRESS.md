@@ -26,7 +26,7 @@
 
 ## 当前进度（2026-11-17 UTC+8）
 
-S0–S5 已完成；S6 已完成（含真实 GitLab CE + Runner 实测）；S7 知识库主体已完成（脚本模型 + 确定性嵌入下退出条件在 CI 通过；真实嵌入模型 embeddinggemma / nomic-embed-text 已在本地 Ollama 实测）；S8–S9、P1/P2 未开始。真实强模型（Claude Opus 5.5）已跑通 S4/S6/S7，实测修复 8 个问题（ADR-0009）。下一步：S8 生产化。启动方式见 README「快速开始」。
+S0–S5 已完成；S6 已完成（含真实 GitLab CE + Runner 实测）；S7 知识库主体已完成（脚本模型 + 确定性嵌入下退出条件在 CI 通过；真实嵌入模型 embeddinggemma / nomic-embed-text 已在本地 Ollama 实测）；S8–S9、P1/P2 未开始。真实强模型（Claude Opus 5.5）已跑通 S4/S6/S7，实测修复 8 个问题（ADR-0009）。开发、评审、测试 Agent 可以绑定外部执行引擎 Claude Code / Codex / OpenCode / pi：只用它们的 harness，模型经平台代理走平台登记的 API；git、MR、评审仍由平台负责（ADR-0010）。下一步：S8 生产化。启动方式见 README「快速开始」。
 
 ## S7 知识库与跨项目问答（2026-11-17，见 ADR-0008）
 
