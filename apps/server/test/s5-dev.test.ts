@@ -5,7 +5,7 @@ import { join } from "node:path";
 import { and, eq, sql } from "drizzle-orm";
 import { PAYMENTS_REPO } from "../src/cli/demo-repos";
 import type { Ctx } from "../src/core/context";
-import { artifact, auditLog, event, job, localScmIssue, localScmMr, proposal, session, sessionTurn, task, workspace } from "../src/db/schema";
+import { agent, artifact, auditLog, event, job, localScmIssue, localScmMr, proposal, session, sessionTurn, task, workspace } from "../src/db/schema";
 import { git } from "../src/modules/scm/git";
 import { createTestApp, type TestApp } from "./helpers";
 
@@ -290,6 +290,17 @@ describe("S5 dev agent — guards", () => {
     expect(scopeGuard({ files: 1, additions: 2, deletions: 0, paths: ["deploy/k8s.yaml"] }, s).humanReviewRequired).toBe(true);
     expect(scopeGuard({ files: 4, additions: 2, deletions: 0, paths: ["a", "b", "c", "d"] }, s).reasons[0]).toContain("文件数");
     expect(scopeGuard({ files: 1, additions: 90, deletions: 20, paths: ["a"] }, s).reasons[0]).toContain("行数");
+  });
+
+  test("the process sandbox HOME (.sandbox-home, harness configs and caches) is never committed", async () => {
+    const tk = await newTask("HOME 不入库");
+    const [r] = await t.s.repos.projectRepos(projectId);
+    const ws = await t.s.workspaces.ensure(ownerCtx, (await t.s.db.root.select().from(task).where(eq(task.id, tk.id)))[0]!, r!);
+    await Bun.write(join(ws.worktreePath!, ".sandbox-home", ".config", "token"), "eyJhbGciOiJIUzI1NiJ9.session.token");
+    await Bun.write(join(ws.worktreePath!, "src", "note.ts"), "export const n = 1;\n");
+    const devRow = (await t.s.db.root.select().from(agent).where(eq(agent.id, dev.id)))[0]!;
+    const c = await t.s.workspaces.commit(ownerCtx, await t.s.workspaces.load(ws.id), devRow, (await t.s.db.root.select().from(task).where(eq(task.id, tk.id)))[0]!, "只提交代码");
+    expect(c!.files).toEqual(["src/note.ts"]);
   });
 
   test("concurrent mirror syncs of a fresh repo (kb.index + dev.turn right after binding) all succeed", async () => {

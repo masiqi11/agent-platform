@@ -56,6 +56,15 @@ export const serverSchema = {
   LLM_EMBEDDING_MODEL: z.string().optional(),
   /** Wire APIs the bootstrap endpoint accepts for the harness proxy, e.g. "chat,responses,messages". */
   LLM_APIS: z.string().optional(),
+  /** ADR-0010: the platform as seen from inside the sandbox (model proxy + MCP); default http://127.0.0.1:PORT. */
+  HARNESS_PLATFORM_URL: z.string().optional(),
+  /** Executables for the harness engines (default: the command name on PATH). */
+  HARNESS_CLAUDE_CODE_BIN: z.string().optional(),
+  HARNESS_CODEX_BIN: z.string().optional(),
+  HARNESS_OPENCODE_BIN: z.string().optional(),
+  HARNESS_PI_BIN: z.string().optional(),
+  /** Comma-separated non-secret env names passed into harness runs (e.g. HTTPS_PROXY,NO_PROXY,NODE_EXTRA_CA_CERTS). */
+  HARNESS_PASS_ENV: z.string().optional(),
   DEMO_MODE: bool.default(false),
   AGENTS_PAUSED: bool.default(false),
   DINGTALK_CLIENT_ID: z.string().optional(),

@@ -17,6 +17,14 @@ export interface ExecRequest {
   timeoutMs?: number;
   /** Extra non-secret env; keys that look like credentials are dropped (SBX-07 / INV-17). */
   env?: Record<string, string>;
+  /**
+   * Session-scoped tokens only (ADR-0010): an agent session token for the platform model proxy and
+   * MCP endpoint — short-lived, bound to one session, revoked with the agent. Never a provider key
+   * or a repository credential; those never enter the sandbox (INV-17).
+   */
+  sessionEnv?: Record<string, string>;
+  /** Live stdout (e.g. a harness's JSON event stream), in chunks as they arrive. */
+  onStdout?: (chunk: string) => void;
   /** Image for the docker sandbox (per repo, SBX-09). */
   image?: string;
   /** Egress allowlist (SBX-03). Empty = no network. */
@@ -74,7 +82,7 @@ async function drain(stream: ReadableStream<Uint8Array> | null | undefined, cap:
   return { text: Buffer.concat(parts).toString("utf8"), truncated: total > kept };
 }
 
-async function run(argv: string[], o: { cwd: string; env: Record<string, string>; timeoutMs: number; onTimeout?: () => Promise<void> }) {
+async function run(argv: string[], o: { cwd: string; env: Record<string, string>; timeoutMs: number; onTimeout?: () => Promise<void>; onStdout?: (chunk: string) => void }) {
   const t0 = Date.now();
   const useSetsid = existsSync("/usr/bin/setsid") || existsSync("/bin/setsid");
   // `setsid` makes the child a new process-group leader (it execs in place when the caller is not a
@@ -99,7 +107,14 @@ async function run(argv: string[], o: { cwd: string; env: Record<string, string>
       logBytes += s.length;
     }
   };
-  const [out, err] = await Promise.all([drain(proc.stdout, OUTPUT_CAP, tee), drain(proc.stderr, OUTPUT_CAP, tee)]);
+  const dec = new TextDecoder();
+  const [out, err] = await Promise.all([
+    drain(proc.stdout, OUTPUT_CAP, (b) => {
+      tee(b);
+      if (o.onStdout) o.onStdout(dec.decode(b, { stream: true }));
+    }),
+    drain(proc.stderr, OUTPUT_CAP, tee),
+  ]);
   const code = await proc.exited;
   clearTimeout(timer);
   // Make sure nothing in the group survives a normal exit either.
@@ -130,7 +145,7 @@ export function createProcessSandbox(defaultTimeoutMs: number): Sandbox {
     },
     async exec(req) {
       const home = join(req.cwd, ".sandbox-home");
-      const r = await run(["sh", "-c", req.cmd], { cwd: req.cwd, env: sandboxEnv(home, req.env), timeoutMs: req.timeoutMs ?? defaultTimeoutMs });
+      const r = await run(["sh", "-c", req.cmd], { cwd: req.cwd, env: { ...sandboxEnv(home, req.env), ...req.sessionEnv }, timeoutMs: req.timeoutMs ?? defaultTimeoutMs, onStdout: req.onStdout });
       return { ...r, sandbox: "process" };
     },
     async sweep() {
@@ -190,7 +205,7 @@ export function createDockerSandbox(cfg: { image?: string; runtime?: string; tim
       if (uid === 0) await makeWritable(req.cwd);
       const name = `ap-sbx-${newId("x").slice(2, 18).toLowerCase()}`;
       const l = req.limits ?? {};
-      const env = sandboxEnv("/tmp", req.env, "/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin");
+      const env = { ...sandboxEnv("/tmp", req.env, "/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"), ...req.sessionEnv };
       if (req.egress?.length) log.warn("sandbox.egress_not_enforced", { note: "allowlist recorded; container still runs with network none" });
       const argv = [
         docker,
@@ -230,6 +245,7 @@ export function createDockerSandbox(cfg: { image?: string; runtime?: string; tim
       ];
       const r = await run(argv, {
         cwd: req.cwd,
+        onStdout: req.onStdout,
         env: { PATH: process.env.PATH ?? "" },
         timeoutMs: req.timeoutMs ?? cfg.timeoutMs,
         onTimeout: async () => {

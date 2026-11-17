@@ -179,6 +179,7 @@ export function createWorkspaces(d: { config: Config; db: Database; audit: Audit
     await rm(path, { recursive: true, force: true });
     await mkdir(resolve(path, ".."), { recursive: true });
     await git(["clone", "-q", "--no-hardlinks", mirror, path], { cwd: "/" });
+    await excludeSandboxHome(path);
     const remoteHas = (await git(["show-ref", "--verify", "--quiet", `refs/heads/${branch}`], { cwd: mirror, allowFail: true })).ok;
     // Reuse the pushed branch (reassignment / recreate, TSK-补3); otherwise branch off the default branch.
     if (remoteHas) await git(["checkout", "-q", "-B", branch, `origin/${branch}`], { cwd: path });
@@ -235,6 +236,17 @@ export function createWorkspaces(d: { config: Config; db: Database; audit: Audit
       paths: rows.map((r) => r[2] ?? "").slice(0, 200),
     };
     return { ...stat, ...scopeGuard(stat, settings) };
+  }
+
+  /**
+   * The process sandbox puts HOME at `<workspace>/.sandbox-home` (tool caches, harness configs that
+   * hold the session token). It must never be staged by `git add -A`.
+   */
+  async function excludeSandboxHome(dir: string) {
+    const f = join(dir, ".git", "info", "exclude");
+    await mkdir(join(dir, ".git", "info"), { recursive: true });
+    const cur = existsSync(f) ? await Bun.file(f).text() : "";
+    if (!cur.split("\n").includes(".sandbox-home/")) await Bun.write(f, `${cur}${cur && !cur.endsWith("\n") ? "\n" : ""}.sandbox-home/\n`);
   }
 
   /** Stages everything and commits as the agent. Returns null when there is nothing to commit. */
@@ -553,6 +565,7 @@ export function createWorkspaces(d: { config: Config; db: Database; audit: Audit
     await rm(dir, { recursive: true, force: true });
     await mkdir(resolve(dir, ".."), { recursive: true });
     await git(["clone", "-q", "--no-hardlinks", mirror, dir], { cwd: "/" });
+    await excludeSandboxHome(dir);
     await git(["checkout", "-q", "--detach", sha], { cwd: dir });
     return dir;
   }
