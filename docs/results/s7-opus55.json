@@ -1,0 +1,91 @@
+{
+  "at": "2026-11-17T02:42:41.197Z",
+  "model": "claude-opus-5-5",
+  "endpoint": "sub.foxnio.com",
+  "rows": [
+    {
+      "kind": "project",
+      "question": "支付回调是怎么验签的？",
+      "ok": true,
+      "by": "claude-opus-5-5",
+      "confidence": "high",
+      "cited": [
+        "src/callback.ts",
+        "src/callback.ts",
+        "docs/runbook.md"
+      ],
+      "answer": "支付回调先对原始请求体 `body` 验签，再按订单号做幂等处理。验签方式是：使用上游约定的 `merchantSecret` 计算 `HMAC-SHA256(body)`，输出十六进制字符串 `expected`；随后先校验 `expected` 与传入 `signature` 的长度是否一致，长度一致时通过 `timingSafeEqual` 做常量时间比较，避免直接字符串比较带来的时序风险。若上游轮换了商户密钥，也会导致验签失败。",
+      "ms": 11623
+    },
+    {
+      "kind": "project",
+      "question": "退款金额有什么校验规则？",
+      "ok": true,
+      "by": "claude-opus-5-5",
+      "confidence": "high",
+      "cited": [
+        "src/refund.ts",
+        "src/refund.ts"
+      ],
+      "answer": "退款金额校验规则包括：1）本次退款金额 amountCents 必须大于 0，否则提示“退款金额必须为正数”；2）累计退款金额 refundedCents 加上本次退款金额 amountCents 不得超过支付金额 paidCents，否则提示“累计退款金额超过支付金额”。退款仅适用于已支付订单。",
+      "ms": 14833
+    },
+    {
+      "kind": "project",
+      "question": "金额取整用的是什么规则，为什么？",
+      "ok": true,
+      "by": "claude-opus-5-5",
+      "confidence": "high",
+      "cited": [
+        "src/rounding.ts",
+        "src/rounding.ts"
+      ],
+      "answer": "金额取整采用银行家舍入规则，即“四舍六入五成双”：小于 0.5 的部分舍去，大于 0.5 的部分进位，恰好为 0.5 时取相邻偶数，避免产生系统性偏差。使用该规则的原因是避免对账误差累积。分转元的实现是先对“分”执行该舍入，再除以 100 转为“元”。",
+      "ms": 24374
+    },
+    {
+      "kind": "project",
+      "question": "量子纠缠的哈密顿量怎么写",
+      "ok": true,
+      "by": null,
+      "confidence": "low",
+      "cited": [],
+      "answer": "未检索到依据",
+      "ms": 8
+    },
+    {
+      "kind": "global",
+      "question": "超时相关的计费逻辑在哪个仓库哪个文件",
+      "ok": true,
+      "consulted": [
+        "BILL",
+        "PAY"
+      ],
+      "cited": [
+        "BILL:src/payments-client.ts",
+        "BILL:src/payments-client.ts",
+        "PAY:README.md",
+        "PAY:src/gateway.ts",
+        "PAY:src/gateway.ts",
+        "PAY:src/gateway.ts"
+      ],
+      "answer": "【BILL】在 `billing` 仓库的 `src/payments-client.ts` 文件中。该文件定义了支付调用超时 `PAYMENTS_CALL_TIMEOUT_MS = 3_000`，并通过 `chargeInvoice` 实现“失败或超时最多重试 1 次，仍失败则返回 `pending`（账单记为待支付）”的逻辑。\n\n【PAY】超时相关的计费逻辑位于 payments 仓库的 src/gateway.ts 文件。其中 UPSTREAM_GATEWAY_TIMEOUT_MS 定义上游超时为 5 秒，GATEWAY_CALL_TIMEOUT_MS 定义本地调用超时为 30 秒（建议",
+      "ms": 52109
+    }
+  ],
+  "calls": {
+    "total": 14,
+    "ok": 13,
+    "repaired": 0,
+    "purposes": [
+      "kb.judge",
+      "kb.answer"
+    ]
+  },
+  "failures": [
+    {
+      "purpose": "kb.judge",
+      "error": "网络错误：ECONNRESET: The socket connection was closed unexpectedly. For more information, pass `verbose: true` in the second argument to fetch()"
+    }
+  ]
+}

@@ -1,0 +1,96 @@
+{
+  "at": "2026-11-17T02:40:14.037Z",
+  "model": "claude-opus-5-5",
+  "endpoint": "sub.foxnio.com",
+  "minutes": 5.4,
+  "steps": [
+    {
+      "step": "bind demo repo (bun test fails on main: the timeout bug)",
+      "ok": true,
+      "ms": 1061
+    },
+    {
+      "step": "task → in_progress",
+      "ok": true,
+      "ms": 118471
+    },
+    {
+      "step": "task → in_review",
+      "ok": true,
+      "ms": 168325
+    },
+    {
+      "step": "task → testing",
+      "ok": true,
+      "ms": 247748
+    },
+    {
+      "step": "task → done",
+      "ok": true,
+      "ms": 321956
+    },
+    {
+      "step": "merged by the queue",
+      "ok": true,
+      "ms": 321957,
+      "note": "merged "
+    },
+    {
+      "step": "fix on main",
+      "ok": true,
+      "ms": 321969,
+      "note": "+export const GATEWAY_CALL_TIMEOUT_MS = 3_000;"
+    },
+    {
+      "step": "reviews",
+      "ok": true,
+      "ms": 321973,
+      "note": "approved(0 条)"
+    },
+    {
+      "step": "test runs",
+      "ok": true,
+      "ms": 321973,
+      "note": "passed"
+    },
+    {
+      "step": "no dead jobs",
+      "ok": true,
+      "ms": 321973
+    }
+  ],
+  "calls": {
+    "total": 35,
+    "ok": 35,
+    "models": [
+      "claude-opus-5-5"
+    ],
+    "byPurpose": {
+      "dev.turn": {
+        "n": 19,
+        "ok": 19,
+        "avgMs": 8633,
+        "tokensOut": 2039
+      },
+      "review.turn": {
+        "n": 7,
+        "ok": 7,
+        "avgMs": 11028,
+        "tokensOut": 969
+      },
+      "test.turn": {
+        "n": 7,
+        "ok": 7,
+        "avgMs": 7257,
+        "tokensOut": 430
+      },
+      "kb.judge": {
+        "n": 2,
+        "ok": 2,
+        "avgMs": 9389,
+        "tokensOut": 89
+      }
+    }
+  },
+  "failures": []
+}

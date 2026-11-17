@@ -65,6 +65,7 @@ bun run dev
 - 设计取舍见 `docs/adr/0006-s5-code-execution.md`、`docs/adr/0007-s6-review-test-merge.md`。
 - **知识库**：`bun run seed` 后仓库在后台建索引。项目「知识库」页可问项目船长、看三路检索如何命中；工作台「问全局船长」问“超时相关的计费逻辑在哪个仓库哪个文件”，会询问计费服务的船长并给出可点击的引用。演示用确定性嵌入 `scripted:embed`。**换真实嵌入模型**：本地起 Ollama 并拉取 `embeddinggemma`（多语言，768 维，推荐）或 `nomic-embed-text`，在「管理 → 模型与预算」登记供应商、用途选「嵌入模型」，再在「知识库嵌入」里切换，所有索引会后台全量重建。对比评测：`OLLAMA_URL=… EMBED_MODEL=embeddinggemma bun test/kb/embed-eval.ts`（在 `apps/server` 下运行）。
 - **真实 GitLab 实测**：`scripts/gitlab-local.sh up` 在 docker 里起 GitLab CE + Runner（约 4 GB 内存，首次启动 3–5 分钟），建好演示项目、受保护分支（推送 Maintainers、合并 Developers + Maintainers）、Developer 项目令牌和 Runner，并打印运行 `test/gitlab/s6-gitlab.ts` 的命令；`down` 删除容器。也可以对已有 GitLab 用手动工作流 `gitlab-e2e`（仓库密钥 `GITLAB_E2E_URL` / `GITLAB_E2E_TOKEN`）。
+- **真实模型实测**：`apps/server/test/ollama/` 下的 `s4-scenario.ts`（船长）、`s6-scenario.ts`（主场景第 4–8 步）、`s7-scenario.ts`（知识库问答）可以对任何 OpenAI 兼容端点或本地 Ollama 运行：`LLM_BASE_URL=… LLM_MODEL=… LLM_API_KEY=… RESULT=<名称> bun test/ollama/s6-scenario.ts`（需要 `TEST_DATABASE_URL`）。Claude Opus 5.5 的结果和发现的问题见 ADR-0009。
 
 ## 目录
 
