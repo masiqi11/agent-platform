@@ -12,6 +12,7 @@ import type { Database } from "../../db";
 import { agent, budget, credential, llmCall, model, modelProvider, project, session, tenant } from "../../db/schema";
 import type { Identity } from "../identity/service";
 import { SCRIPTS, type ScriptReply } from "./scripts";
+import { createCredentialUseAudit } from "../../core/credential-use";
 
 type ProviderRow = typeof modelProvider.$inferSelect;
 type ModelRow = typeof model.$inferSelect;
@@ -273,6 +274,7 @@ export function createLlm(d: { config: Config; db: Database; audit: Audit; event
   const maxRetries = opts.maxRetries ?? 3;
   const backoffMs = opts.backoffMs ?? Number(process.env.LLM_BACKOFF_MS ?? 400);
   const doFetch = opts.fetch ?? fetch;
+  const auditUse = createCredentialUseAudit({ audit: d.audit, systemCtx: (t) => d.identity.systemCtx(t) });
 
   /* ───────────── registry ───────────── */
 
@@ -492,6 +494,7 @@ export function createLlm(d: { config: Config; db: Database; audit: Audit; event
     const [c] = await db.root.select().from(credential).where(eq(credential.id, p.credentialId));
     if (!c) return undefined;
     await db.root.update(credential).set({ lastUsedAt: new Date(), lastUsedBy: "llm" }).where(eq(credential.id, c.id));
+    await auditUse(c, `provider:${p.id}`);
     return d.vault.decrypt(c.ciphertext, c.keyVersion);
   }
 

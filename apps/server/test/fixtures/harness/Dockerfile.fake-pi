@@ -1,0 +1,4 @@
+# Test-only sandbox image: the bun base image + the fake pi harness (ADR-0010 H2, S8-1).
+ARG BASE=mirror.gcr.io/oven/bun:1.4.4-alpine
+FROM ${BASE}
+COPY fake-pi.ts /opt/fake-pi.ts

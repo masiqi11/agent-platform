@@ -1,7 +1,7 @@
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { signupGrant } from "../src/auth";
 import { eq } from "drizzle-orm";
-import { decision, modelProvider, question, repo, session, tenant } from "../src/db/schema";
+import { decision, modelProvider, question, repo, session, tenant, deadLetter } from "../src/db/schema";
 import { newId } from "../src/core/ids";
 import { createTestApp, type TestApp } from "./helpers";
 
@@ -70,6 +70,8 @@ beforeAll(async () => {
   await t.s.llm.ensureDefaults(tA);
   fixtures.providers = (await t.s.db.root.select().from(modelProvider).where(eq(modelProvider.tenantId, tA)))[0]!.id;
   // S5: a repo of tenant A (row only; no files needed for the isolation check).
+  fixtures["dead-letters"] = newId("dlq");
+  await t.s.db.root.insert(deadLetter).values({ id: fixtures["dead-letters"], tenantId: tA, source: "job", refId: newId("job"), payload: { type: "x" }, error: "机密错误", attempts: 1 });
   fixtures.repos = newId("rep");
   await t.s.db.root.insert(repo).values({ id: fixtures.repos, tenantId: tA, projectId: proj.body.id, name: "iso", provider: "local", externalId: "iso.git", url: "/nonexistent/iso.git" });
   // Tenant B (second tenant created directly; self-host normally has one).

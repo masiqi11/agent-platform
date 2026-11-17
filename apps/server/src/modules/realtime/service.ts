@@ -6,6 +6,7 @@ import { chatGroup, event, groupMember, task } from "../../db/schema";
 import type { Ctx } from "../../core/context";
 import { log } from "../../core/logger";
 import type { Identity } from "../identity/service";
+import { metrics } from "../../core/metrics";
 
 const RING_SIZE = 512;
 const MAX_QUEUE = 1000;
@@ -163,9 +164,11 @@ export function createRealtime(d: { db: Database; identity: Identity }) {
     },
     open(c: Conn) {
       conns.set(c.id, c);
+      metrics.ws.set({}, conns.size);
     },
     close(id: string) {
       conns.delete(id);
+      metrics.ws.set({}, conns.size);
     },
     async message(c: Conn, raw: unknown, authenticate: (token: string) => Promise<Ctx>) {
       const f = (typeof raw === "string" ? JSON.parse(raw) : raw) as { type?: string; token?: string; topic?: string; lastSeq?: number };

@@ -3,6 +3,12 @@ import type { Env } from "./env";
 
 export interface Config {
   nodeEnv: Env["NODE_ENV"];
+  /** Bearer token for GET /metrics. */
+  metricsToken?: string;
+  /** §14.5 SSRF guard. */
+  outbound: { enforce: boolean; allow: string[] };
+  /** §8.5 retention (cleanup job off unless enabled). */
+  retention: { enabled: boolean; eventsDays: number; jobsOkDays: number; jobsFailedDays: number; transcriptDays: number };
   isProd: boolean;
   role: Env["ROLE"];
   host: string;
@@ -26,14 +32,14 @@ export interface Config {
   currentKeyVersion: number;
   s3: { endpoint: string; region: string; bucket: string; accessKey: string; secretKey: string } | null;
   maxUploadMb: number;
-  sandbox: { kind: "process" | "docker"; image?: string; runtime?: string; timeoutMs: number };
+  sandbox: { kind: "process" | "docker"; image?: string; runtime?: string; timeoutMs: number; network?: string; platformUrl?: string; platformPort: number; imageAllow?: string[] };
   /** External harness engines (ADR-0010). */
   harness: { platformUrl: string; bins: Partial<Record<"claude-code" | "codex" | "opencode" | "pi", string>>; passEnv: Record<string, string>; cacheDir: string };
   llmBootstrap: { baseUrl: string; apiKey?: string; model: string; embeddingModel?: string; apis?: Array<"chat" | "responses" | "messages"> } | null;
   demoMode: boolean;
   agentsPaused: boolean;
   dingtalk: { clientId: string; clientSecret: string; robotCode?: string } | null;
-  worker: { concurrency: number; eventPollMs: number; jobPollMs: number };
+  worker: { concurrency: number; eventPollMs: number; jobPollMs: number; shutdownGraceMs: number };
 }
 
 /** Pure: derives paths/defaults from validated env (§7.1). */
@@ -46,6 +52,21 @@ export function createConfig(env: Env, cwd = process.cwd()): Config {
   return {
     nodeEnv: env.NODE_ENV,
     isProd,
+    metricsToken: env.METRICS_TOKEN,
+    outbound: {
+      enforce: env.OUTBOUND_GUARD ? env.OUTBOUND_GUARD === "on" : isProd,
+      allow: (env.OUTBOUND_ALLOW ?? "")
+        .split(",")
+        .map((x) => x.trim())
+        .filter(Boolean),
+    },
+    retention: {
+      enabled: env.RETENTION_ENABLED,
+      eventsDays: env.RETENTION_EVENTS_DAYS,
+      jobsOkDays: env.RETENTION_JOBS_OK_DAYS,
+      jobsFailedDays: env.RETENTION_JOBS_FAILED_DAYS,
+      transcriptDays: env.RETENTION_TRANSCRIPT_DAYS,
+    },
     role: env.ROLE,
     host: env.HOST,
     port: env.PORT,
@@ -84,7 +105,18 @@ export function createConfig(env: Env, cwd = process.cwd()): Config {
         ? { endpoint: env.S3_ENDPOINT, region: env.S3_REGION ?? "us-east-1", bucket: env.S3_BUCKET, accessKey: env.S3_ACCESS_KEY, secretKey: env.S3_SECRET_KEY }
         : null,
     maxUploadMb: env.MAX_UPLOAD_MB,
-    sandbox: { kind: env.SANDBOX ?? (isProd ? "docker" : "process"), image: env.SANDBOX_IMAGE, runtime: env.SANDBOX_RUNTIME, timeoutMs: env.SANDBOX_TIMEOUT_MS },
+    sandbox: {
+      kind: env.SANDBOX ?? (isProd ? "docker" : "process"),
+      image: env.SANDBOX_IMAGE,
+      runtime: env.SANDBOX_RUNTIME,
+      timeoutMs: env.SANDBOX_TIMEOUT_MS,
+      network: env.SANDBOX_NETWORK,
+      platformUrl: env.HARNESS_SANDBOX_PLATFORM_URL,
+      platformPort: env.PORT,
+      imageAllow: env.SANDBOX_IMAGE_ALLOW?.split(",")
+        .map((x) => x.trim())
+        .filter(Boolean),
+    },
     harness: {
       platformUrl: env.HARNESS_PLATFORM_URL ?? `http://127.0.0.1:${env.PORT}`,
       bins: Object.fromEntries(
@@ -123,6 +155,6 @@ export function createConfig(env: Env, cwd = process.cwd()): Config {
     demoMode: env.DEMO_MODE,
     agentsPaused: env.AGENTS_PAUSED,
     dingtalk: env.DINGTALK_CLIENT_ID && env.DINGTALK_CLIENT_SECRET ? { clientId: env.DINGTALK_CLIENT_ID, clientSecret: env.DINGTALK_CLIENT_SECRET, robotCode: env.DINGTALK_ROBOT_CODE } : null,
-    worker: { concurrency: env.WORKER_CONCURRENCY, eventPollMs: env.EVENT_POLL_MS, jobPollMs: env.JOB_POLL_MS },
+    worker: { concurrency: env.WORKER_CONCURRENCY, eventPollMs: env.EVENT_POLL_MS, jobPollMs: env.JOB_POLL_MS, shutdownGraceMs: env.SHUTDOWN_GRACE_MS },
   };
 }

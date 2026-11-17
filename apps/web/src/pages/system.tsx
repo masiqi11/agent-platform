@@ -1,6 +1,7 @@
 import { Activity, Box, Database, HardDrive, Inbox, Layers, Plug, Timer } from "lucide-react";
 import type { ReactNode } from "react";
 import { StatusDot } from "@/components/badges";
+import { DeadLetterPanel, TracePanel } from "@/components/ops-panels";
 import { ErrorState, PageHeader, PageSkeleton } from "@/components/states";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { useSystemStatus } from "@/lib/code";
@@ -44,8 +45,14 @@ export function SystemPage() {
         />
         <Tile icon={Activity} title="事件消费延迟" tone={s.events.lag > 500 ? "danger" : s.events.lag > 50 ? "attention" : "ok"} value={`${s.events.lag} 条`} detail={`最新 seq ${s.events.headSeq}`} />
         <Tile icon={Timer} title="作业积压" tone={s.jobs.queued > 200 ? "attention" : "ok"} value={`${s.jobs.queued} 排队`} detail={`${s.jobs.running} 运行中 · ${s.jobs.dead} 失败`} />
-        <Tile icon={Inbox} title="死信" tone={s.deadLetters > 0 ? "attention" : "ok"} value={s.deadLetters} detail="未重放的失败事件 / 作业" />
-        <Tile icon={Box} title="沙箱" tone={s.sandbox.ok ? (s.sandbox.kind === "process" ? "attention" : "ok") : "danger"} value={s.sandbox.kind} detail={s.sandbox.detail} />
+        <Tile icon={Inbox} title="死信" tone={s.deadLetters > 0 ? "attention" : "ok"} value={s.deadLetters} detail="未处理的失败事件 / 作业（见下方）" />
+        <Tile
+          icon={Box}
+          title="沙箱"
+          tone={!s.sandbox.ok ? "danger" : s.sandbox.kind === "process" || s.sandbox.warning ? "attention" : "ok"}
+          value={s.sandbox.kind}
+          detail={s.sandbox.warning ? `${s.sandbox.detail}。${s.sandbox.warning}` : s.sandbox.detail}
+        />
         <Tile
           icon={HardDrive}
           title="工作区磁盘"
@@ -61,9 +68,10 @@ export function SystemPage() {
           detail={s.providers.map((p) => `${p.name}${p.circuit === "open" ? "（熔断）" : ""}`).join("、") || "未配置"}
         />
       </div>
+      <DeadLetterPanel />
       <section>
         <h2 className="mb-2 text-sm font-semibold">事件消费者</h2>
-        <div className="rounded-xl border bg-card">
+        <div className="overflow-x-auto rounded-xl border bg-card">
           <Table>
             <TableHeader>
               <TableRow>
@@ -86,6 +94,7 @@ export function SystemPage() {
           </Table>
         </div>
       </section>
+      <TracePanel />
     </div>
   );
 }

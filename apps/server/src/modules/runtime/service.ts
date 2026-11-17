@@ -6,7 +6,7 @@ import type { Ctx } from "../../core/context";
 import { DomainError, notFound } from "../../core/errors";
 import type { Events } from "../../core/events";
 import { newId } from "../../core/ids";
-import { log } from "../../core/logger";
+import { log, redactValue } from "../../core/logger";
 import type { Config } from "../../config";
 import type { Database } from "../../db";
 import { agent, session, sessionTurn, tenant } from "../../db/schema";
@@ -170,14 +170,18 @@ export function createRuntime(d: { config: Config; db: Database; audit: Audit; e
       .select({ n: sql<number>`count(*)::int` })
       .from(sessionTurn)
       .where(eq(sessionTurn.sessionId, sessionId));
+    // §14.3: transcripts go through the redactor like logs and model requests — tool output
+    // (a file an agent read, a command it ran) can carry a secret that was committed by mistake.
+    const scrub = <T>(v: T): T =>
+      (typeof v === "string" ? redactValue(v) : Array.isArray(v) ? v.map(scrub) : v && typeof v === "object" ? Object.fromEntries(Object.entries(v).map(([k, x]) => [k, scrub(x)])) : v) as T;
     await db.root.insert(sessionTurn).values({
       id: newId("trn"),
       sessionId,
       idx: n?.n ?? 0,
       role: t.role,
-      content: t.content.slice(0, 20_000),
-      toolCalls: t.toolCalls ?? [],
-      contextPackage: (t.contextPackage ?? null) as Record<string, unknown> | null,
+      content: redactValue(t.content).slice(0, 20_000),
+      toolCalls: scrub(t.toolCalls ?? []),
+      contextPackage: scrub((t.contextPackage ?? null) as Record<string, unknown> | null),
       tokensIn: t.tokensIn ?? 0,
       tokensOut: t.tokensOut ?? 0,
     });

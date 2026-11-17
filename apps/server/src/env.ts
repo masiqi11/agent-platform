@@ -50,12 +50,27 @@ export const serverSchema = {
   SANDBOX_IMAGE: z.string().optional(),
   SANDBOX_RUNTIME: z.string().optional(),
   SANDBOX_TIMEOUT_MS: z.coerce.number().int().default(600000),
+  /** SBX-09: comma-separated image prefixes the docker sandbox may run (e.g. "registry.internal/,mirror.gcr.io/oven/"). */
+  SANDBOX_IMAGE_ALLOW: z.string().optional(),
+  /** Internal docker network whose only reachable host is the platform (external engines, ADR-0010). */
+  SANDBOX_NETWORK: z
+    .string()
+    .regex(/^[a-zA-Z0-9][a-zA-Z0-9_.-]*$/)
+    .optional(),
+  /** Platform URL as seen from that network (default: http://<network gateway>:PORT). */
+  HARNESS_SANDBOX_PLATFORM_URL: z.string().url().optional(),
   LLM_BASE_URL: z.string().optional(),
   LLM_API_KEY: z.string().optional(),
   LLM_MODEL: z.string().optional(),
   LLM_EMBEDDING_MODEL: z.string().optional(),
   /** Wire APIs the bootstrap endpoint accepts for the harness proxy, e.g. "chat,responses,messages". */
   LLM_APIS: z.string().optional(),
+  /** §14.5 SSRF guard on server-side requests (model providers, SCM). Default: on in production. */
+  OUTBOUND_GUARD: z.enum(["on", "off"]).optional(),
+  /** Internal targets allowed through the guard: hosts, host:port or IPv4 CIDRs, comma-separated. */
+  OUTBOUND_ALLOW: z.string().optional(),
+  /** Bearer token for GET /metrics (Prometheus). Unset: /metrics is open outside production, off in production. */
+  METRICS_TOKEN: z.string().min(16).optional(),
   /** ADR-0010: the platform as seen from inside the sandbox (model proxy + MCP); default http://127.0.0.1:PORT. */
   HARNESS_PLATFORM_URL: z.string().optional(),
   /** Executables for the harness engines (default: the command name on PATH). */
@@ -66,6 +81,12 @@ export const serverSchema = {
   /** Comma-separated non-secret env names passed into harness runs (e.g. HTTPS_PROXY,NO_PROXY,NODE_EXTRA_CA_CERTS). */
   HARNESS_PASS_ENV: z.string().optional(),
   DEMO_MODE: bool.default(false),
+  /** Retention cleanup (§8.5): off unless explicitly enabled. Periods in days. */
+  RETENTION_ENABLED: bool.default(false),
+  RETENTION_EVENTS_DAYS: z.coerce.number().int().min(7).default(90),
+  RETENTION_JOBS_OK_DAYS: z.coerce.number().int().min(1).default(7),
+  RETENTION_JOBS_FAILED_DAYS: z.coerce.number().int().min(7).default(30),
+  RETENTION_TRANSCRIPT_DAYS: z.coerce.number().int().min(30).default(180),
   AGENTS_PAUSED: bool.default(false),
   DINGTALK_CLIENT_ID: z.string().optional(),
   DINGTALK_CLIENT_SECRET: z.string().optional(),
@@ -73,6 +94,8 @@ export const serverSchema = {
   WORKER_CONCURRENCY: z.coerce.number().int().default(4),
   EVENT_POLL_MS: z.coerce.number().int().default(1000),
   JOB_POLL_MS: z.coerce.number().int().default(1000),
+  /** How long a stopping worker lets running jobs finish (keep below the orchestrator's kill timeout). */
+  SHUTDOWN_GRACE_MS: z.coerce.number().int().min(0).default(25_000),
 };
 
 export type Env = z.infer<z.ZodObject<typeof serverSchema>>;

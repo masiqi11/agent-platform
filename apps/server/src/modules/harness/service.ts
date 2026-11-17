@@ -76,9 +76,9 @@ export function createHarness(d: { config: Config; db: Database; sandbox: Sandbo
     scratch?: Record<string, unknown>;
   }): Promise<HarnessResult> {
     const engine = o.agent.engine as Engine;
-    if (d.sandbox.kind !== "process")
-      // The docker sandbox has no network yet (egress allowlist is S8); a harness must reach the platform.
-      throw new DomainError("conflict", "外部执行引擎需要能访问平台的沙箱网络：docker 沙箱的出口白名单在 S8 实现，目前请使用 process 沙箱");
+    // Docker: the run joins the platform network (only the platform is reachable). Process: host network.
+    const sandboxUrl = await d.sandbox.platformUrl();
+    if (d.sandbox.kind === "docker" && !sandboxUrl) throw new DomainError("conflict", "外部执行引擎在 docker 沙箱中需要平台网络：请配置 SANDBOX_NETWORK（见部署文档「外部执行引擎」）");
     const effective = new Set(d.runtime.effectiveTools(o.agent));
     const mcpTools = HARNESS_MCP_TOOLS[o.role].filter((t) => effective.has(t));
     const model = o.agent.modelPolicy.primary ?? (await d.llm.defaultModelName(o.agent.tenantId));
@@ -87,21 +87,27 @@ export function createHarness(d: { config: Config; db: Database; sandbox: Sandbo
       role: o.role,
       prompt: o.prompt,
       model,
-      platformUrl: d.config.harness.platformUrl,
+      platformUrl: sandboxUrl ?? d.config.harness.platformUrl,
       mcpTools,
       maxTurns: o.maxTurns ?? 60,
       resume: o.resume,
       bin: d.config.harness.bins[engine],
       reasoning: o.agent.modelPolicy.reasoning,
     });
+    // Config files are written on the host side of the workspace; HOME inside the sandbox points at the same place.
     const home = join(o.cwd, ".sandbox-home");
+    const homeIn = d.sandbox.homeFor(o.cwd);
     for (const [rel, content] of Object.entries(prep.files)) {
       await mkdir(dirname(join(home, rel)), { recursive: true });
       await Bun.write(join(home, rel), content);
     }
-    await mkdir(d.config.harness.cacheDir, { recursive: true });
-    const env: Record<string, string> = { ...d.config.harness.passEnv, XDG_CACHE_HOME: d.config.harness.cacheDir };
-    for (const [k, v] of Object.entries(prep.env)) env[k] = v.replaceAll("$HOME", home);
+    const env: Record<string, string> = { ...d.config.harness.passEnv };
+    // A shared cache across runs exists only on the host; containers use their HOME.
+    if (d.sandbox.kind === "process") {
+      await mkdir(d.config.harness.cacheDir, { recursive: true });
+      env.XDG_CACHE_HOME = d.config.harness.cacheDir;
+    }
+    for (const [k, v] of Object.entries(prep.env)) env[k] = v.replaceAll("$HOME", homeIn);
     const token = d.runtime.harnessToken(o.agent, o.sessionId, Math.ceil(o.timeoutMs / 1000) + 300);
     const sessionEnv: Record<string, string> = { PLATFORM_LLM_TOKEN: token, ...(engine === "claude-code" ? { ANTHROPIC_API_KEY: token } : {}) };
     await setContext(o.sessionId, { engine, role: o.role, taskId: o.taskId, workspaceId: o.workspaceId, cwd: o.cwd, scratch: o.scratch });
@@ -134,7 +140,7 @@ export function createHarness(d: { config: Config; db: Database; sandbox: Sandbo
       }
       void d.runtime.heartbeat(o.sessionId).catch(() => undefined);
     };
-    const r = await d.sandbox.exec({ cwd: o.cwd, cmd: prep.cmd, env, sessionEnv, timeoutMs: o.timeoutMs, onStdout });
+    const r = await d.sandbox.exec({ cwd: o.cwd, cmd: prep.cmd, env, sessionEnv, timeoutMs: o.timeoutMs, onStdout, network: "platform" });
     for (const e of parseLine(engine, buf.trim())) record(e);
     await pending;
     await setContext(o.sessionId, null);

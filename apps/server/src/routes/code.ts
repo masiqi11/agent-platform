@@ -150,7 +150,7 @@ export const codeRoutes = (s: Services) =>
           }),
           jobs: t.Object({ queued: t.Number(), running: t.Number(), dead: t.Number() }),
           deadLetters: t.Number(),
-          sandbox: t.Object({ kind: t.String(), ok: t.Boolean(), detail: t.String() }),
+          sandbox: t.Object({ kind: t.String(), ok: t.Boolean(), detail: t.String(), warning: t.Union([t.String(), t.Null()]) }),
           providers: t.Array(t.Object({ name: t.String(), kind: t.String(), status: t.String(), circuit: t.String() })),
           disk: t.Union([t.Object({ totalBytes: t.Number(), freeBytes: t.Number(), usedRatio: t.Number() }), t.Null()]),
           checkedAt: t.String(),

@@ -170,6 +170,14 @@ export function createConsumerRunner(db: Database, opts: { owner: string; maxAtt
       consumers.push(c);
     },
     consumers,
+    /** Re-runs one event through one consumer (dead-letter replay, ADM-补4). Throws if it fails again. */
+    async replayOne(consumerName: string, eventId: string) {
+      const c = consumers.find((x) => x.name === consumerName);
+      if (!c) throw new Error(`unknown consumer ${consumerName}`);
+      const [r] = await db.root.select().from(event).where(eq(event.id, eventId));
+      if (!r) throw new Error(`event ${eventId} not found`);
+      await c.handle(toDomainEvent(r));
+    },
     async init() {
       for (const c of consumers) await ensureRow(c.name);
     },

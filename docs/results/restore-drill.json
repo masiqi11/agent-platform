@@ -1,0 +1,9 @@
+{
+  "at": "2026-11-17T06:42:59Z",
+  "backup": "20261117T064257Z",
+  "counts": "agent=8 audit_log=13 credential=1 event=21 project=2 repo=2 task=0",
+  "artifacts": 1,
+  "projects": "key:DPAY key:DBILL",
+  "steps": ["seed", "backup", "restore to empty db + data dir", "migrate", "audit verify", "counts + artifacts match", "server ready, owner signs in"],
+  "result": "passed"
+}

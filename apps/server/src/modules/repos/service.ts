@@ -13,6 +13,7 @@ import type { Config } from "../../config";
 import type { Database } from "../../db";
 import { credential, project, projectMember, repo } from "../../db/schema";
 import type { Identity } from "../identity/service";
+import { createCredentialUseAudit } from "../../core/credential-use";
 import type { Projects } from "../projects/service";
 import { createGitLabScm } from "../scm/service";
 import { createLocalBareRepo, createLocalScm, installGuard } from "../scm/service";
@@ -48,8 +49,20 @@ export interface BindRepoInput {
 const NAME = /^[a-z0-9][a-z0-9._-]{0,62}$/;
 
 /** Repos (§8.2 repo, §12.7 repo binding wizard). Credentials are encrypted; only the last 4 are shown. */
-export function createRepos(d: { config: Config; db: Database; audit: Audit; events: Events; identity: Identity; projects: Projects; vault: Vault; fetch?: typeof fetch }) {
+export function createRepos(d: {
+  config: Config;
+  db: Database;
+  audit: Audit;
+  events: Events;
+  identity: Identity;
+  projects: Projects;
+  vault: Vault;
+  fetch?: typeof fetch;
+  /** §14.5: git remotes are server-side requests too (clone / fetch / push). */
+  outbound?: { check(url: string): Promise<void> };
+}) {
   const { db } = d;
+  const auditUse = createCredentialUseAudit({ audit: d.audit, systemCtx: (t) => d.identity.systemCtx(t) });
 
   const settingsOf = (r: RepoRow) => (r.settings ?? {}) as RepoSettings;
   const present = (r: RepoRow, last4?: string | null) => {
@@ -107,6 +120,7 @@ export function createRepos(d: { config: Config; db: Database; audit: Audit; eve
       .update(credential)
       .set({ lastUsedAt: new Date(), lastUsedBy: `repo:${r.id}` })
       .where(eq(credential.id, tok.row.id));
+    await auditUse(tok.row, `repo:${r.id}`);
     const ca = await secret(r.caCertRef);
     return createGitLabScm({ url: r.url, externalId: r.externalId, defaultBranch: r.defaultBranch }, { token: tok.value, caCert: ca?.value ?? null, fetch: d.fetch });
   }
@@ -183,6 +197,7 @@ export function createRepos(d: { config: Config; db: Database; audit: Audit; eve
     await d.identity.require(ctx, "repo.bind", { projectId });
     if (input.provider !== "gitlab") return { ok: true, defaultBranch: input.defaultBranch ?? "main", defaultBranchProtected: true, canPush: true, warnings: [], detail: "本地仓库无需预检" };
     if (!input.url || !input.token) throw invalid("GitLab 需要项目地址和令牌", [{ path: "/url", message: "必填" }]);
+    await d.outbound?.check(input.url);
     const scm = createGitLabScm(
       { url: input.url, externalId: input.externalId ?? new URL(input.url).pathname.replace(/^\/|\.git$/g, ""), defaultBranch: input.defaultBranch ?? "main" },
       { token: input.token, caCert: input.caCert, fetch: d.fetch },
@@ -223,6 +238,7 @@ export function createRepos(d: { config: Config; db: Database; audit: Audit; eve
     } else {
       if (!input.url || !input.token) throw invalid("GitLab 需要项目地址和令牌", [{ path: "/token", message: "必填" }]);
       if (!input.url.startsWith("https://") && d.config.isProd) throw invalid("生产环境只允许 https 的 GitLab 地址", [{ path: "/url", message: "需要 https" }]);
+      await d.outbound?.check(input.url);
       externalId = externalId || new URL(input.url).pathname.replace(/^\/|\.git$/g, "");
     }
     const settings: RepoSettings = { testCommand: input.testCommand ?? "bun test", ...(input.image ? { image: input.image } : {}) };

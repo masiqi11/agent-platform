@@ -225,7 +225,7 @@ function ProviderCard({ p, defaultModel, embeddingModel }: { p: NonNullable<Retu
                 </>
               )}
             </span>
-            {m.notes && <span className="text-[11px] text-muted-foreground/80">· {m.notes}</span>}
+            {m.notes && <span className="text-[11px] text-muted-foreground">· {m.notes}</span>}
             {!m.embeddingDim && m.name !== defaultModel && (
               <Button size="sm" variant="ghost" className="ml-auto h-6 px-2 text-xs" onClick={() => setDefault.mutate(m.name)}>
                 设为默认
@@ -336,7 +336,7 @@ function BudgetCard() {
         )}
         <div className="flex gap-2">
           <Select value={scope} onValueChange={setScope}>
-            <SelectTrigger className="w-40">
+            <SelectTrigger className="w-40" aria-label="预算范围">
               <SelectValue />
             </SelectTrigger>
             <SelectContent>
