@@ -607,7 +607,15 @@ export function createKnowledge(d: {
       hits: [],
       model: null,
     });
-    if (!hits.length) return none();
+    // §1.3: every answer is countable — cited, or explicitly "no evidence" (ids and counts only).
+    const answered = (citations: number, noEvidence: boolean, model: string | null) =>
+      d.events
+        .emit(ctx, { type: "kb.answered", aggregateType: "project", aggregateId: input.projectId, payload: { projectId: input.projectId, citations, noEvidence, fallback: model === "fallback" } })
+        .catch(() => undefined);
+    if (!hits.length) {
+      await answered(0, true, null);
+      return none();
+    }
     let answer = "";
     let cited: SearchHit[] = [];
     let model: string | null = null;
@@ -649,6 +657,7 @@ export function createKnowledge(d: {
       model = "fallback";
     }
     const stale = cited.some((h) => h.stale);
+    await answered(cited.length, false, model);
     const top = cited[0]!;
     const confidence: AskProjectCaptainOutput["confidence"] = top.routes.length >= 2 && cited.length >= 1 && !stale ? "high" : hasLexicalEvidence(top) ? "medium" : "low";
     return {

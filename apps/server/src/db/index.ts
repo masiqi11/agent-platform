@@ -30,8 +30,44 @@ export function createDatabase(url: string, max = 10): Database {
   const pool = new pg.Pool({ connectionString: url, max, idleTimeoutMillis: 30_000 });
   // TRAP-12: without an error listener an idle client killed by the server crashes the process.
   pool.on("error", (err) => log.warn("db.pool.idle_client_error", { err: err.message }));
-  const root = drizzle({ client: pool }) as unknown as Db;
   const als = new AsyncLocalStorage<TxContext>();
+  // A query on the pool while a transaction is open takes a SECOND connection. Under load that
+  // deadlocks the pool: every connection is held by a transaction waiting for one more (found by
+  // the §15.1 100-task run). Inside a transaction use the ambient executor (db.q()) instead.
+  // Tests fail fast on it; elsewhere it is logged once per call site.
+  const strict = process.env.NODE_ENV === "test" || process.env.DB_TX_GUARD === "throw";
+  const warned = new Set<string>();
+  const guard = (arg?: unknown) => {
+    if (!als.getStore()) return;
+    // The first frames are drizzle / pg internals: report the application's call site.
+    const site =
+      (new Error().stack ?? "")
+        .split("\n")
+        .filter((l) => /\/src\//.test(l) && !l.includes("/db/index.ts"))
+        .slice(0, 3)
+        .map((l) => l.trim().replace(/^at /, ""))
+        .join(" <- ") || "unknown";
+    if (process.env.DB_TX_GUARD_TRACE) {
+      const text = typeof arg === "string" ? arg : ((arg as { text?: string } | undefined)?.text ?? "(connect)");
+      console.error(`TXGUARD_SQL ${text.replace(/\s+/g, " ").slice(0, 160)}`);
+    }
+    if (strict) throw new Error(`second pool connection inside a transaction (use db.q()): ${site}`);
+    if (!warned.has(site)) {
+      warned.add(site);
+      log.warn("db.second_connection_in_tx", { site: site.slice(0, 500) });
+    }
+  };
+  const poolQuery = pool.query.bind(pool) as (...a: unknown[]) => unknown;
+  const poolConnect = pool.connect.bind(pool) as (...a: unknown[]) => unknown;
+  (pool as unknown as { query: unknown }).query = (...a: unknown[]) => {
+    guard(a[0]);
+    return poolQuery(...a);
+  };
+  (pool as unknown as { connect: unknown }).connect = (...a: unknown[]) => {
+    guard();
+    return poolConnect(...a);
+  };
+  const root = drizzle({ client: pool }) as unknown as Db;
 
   const runHooks = async (hooks: TxContext["afterCommit"]) => {
     for (const h of hooks) {

@@ -41,6 +41,20 @@ describe("V3 AsyncLocalStorage transactions", () => {
     expect(calls).toEqual(["hook"]);
   });
 
+  test("a second pool connection inside a transaction is refused (pool deadlock under load, §15.1)", async () => {
+    const { sql } = await import("drizzle-orm");
+    const err = await db
+      .tx(async () => db.root.execute(sql`select 1`))
+      .then(
+        () => null,
+        (e: Error & { cause?: Error }) => e,
+      );
+    expect(String(err?.cause?.message ?? err?.message)).toContain("second pool connection"); // drizzle wraps it as "Failed query"
+    // The ambient executor is the supported way, inside or outside a transaction.
+    await expect(db.tx(async () => db.q().execute(sql`select 1`))).resolves.toBeDefined();
+    expect(await db.root.execute(sql`select 1`)).toBeDefined();
+  });
+
   test("rollback discards afterCommit hooks", async () => {
     const calls: string[] = [];
     await expect(

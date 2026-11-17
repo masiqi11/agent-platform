@@ -13,3 +13,4 @@ apps/web/playwright-report
 apps/web/dist
 .gitlab-local/
 deploy/backups/
+deploy/build-ca.pem

@@ -5,6 +5,8 @@ export interface Config {
   nodeEnv: Env["NODE_ENV"];
   /** Bearer token for GET /metrics. */
   metricsToken?: string;
+  /** S8-7: append model completions to this JSON-lines file (replay fixtures). */
+  llmRecordFile?: string;
   /** §14.5 SSRF guard. */
   outbound: { enforce: boolean; allow: string[] };
   /** §8.5 retention (cleanup job off unless enabled). */
@@ -53,6 +55,7 @@ export function createConfig(env: Env, cwd = process.cwd()): Config {
     nodeEnv: env.NODE_ENV,
     isProd,
     metricsToken: env.METRICS_TOKEN,
+    llmRecordFile: env.LLM_RECORD_FILE,
     outbound: {
       enforce: env.OUTBOUND_GUARD ? env.OUTBOUND_GUARD === "on" : isProd,
       allow: (env.OUTBOUND_ALLOW ?? "")

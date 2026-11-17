@@ -1,4 +1,10 @@
-# Production-style stack: postgres + one-shot migrate + app (§7.3). Secrets come from deploy/.env.
+# Production-style stack (§16.2): postgres + one-shot migrate + app; optional daily backup.
+# Configuration and secrets come from deploy/.env (copy deploy/.env.example). See docs/deploy.md.
+#
+# The app drives the HOST's docker for the sandbox (SANDBOX=docker). Two consequences:
+#   - the docker socket is mounted into the app container (read docs/deploy.md「沙箱与 docker」 first);
+#   - the data directory is mounted at the SAME path inside and outside the container, because the
+#     host daemon resolves sandbox workspace mounts against host paths. Set DATA_PATH to that path.
 services:
   postgres:
     image: pgvector/pgvector:pg16
@@ -11,16 +17,29 @@ services:
       test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-agent}"]
       interval: 5s
       retries: 20
+    restart: unless-stopped
   migrate:
-    build: { context: .., dockerfile: Dockerfile }
+    build: &build
+      context: ..
+      dockerfile: Dockerfile
+      secrets: [build_ca]
     command: ["bun", "apps/server/src/cli/migrate.ts"]
     env_file: .env
+    environment:
+      DATABASE_URL: postgres://${POSTGRES_USER:-agent}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB:-agent_platform}
     depends_on: { postgres: { condition: service_healthy } }
   app:
-    build: { context: .., dockerfile: Dockerfile }
+    build: *build
     env_file: .env
-    ports: ["3000:3000"]
-    volumes: [appdata:/data]
+    environment:
+      DATABASE_URL: postgres://${POSTGRES_USER:-agent}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB:-agent_platform}
+      DATA_DIR: ${DATA_PATH:?set DATA_PATH in deploy/.env}
+    ports: ["${APP_BIND:-127.0.0.1}:${APP_PORT:-3000}:3000"]
+    volumes:
+      - ${DATA_PATH}:${DATA_PATH}
+      - /var/run/docker.sock:/var/run/docker.sock
+    # The socket's group on the host (`stat -c %g /var/run/docker.sock`), so the non-root user can use it.
+    group_add: ["${DOCKER_GID:?set DOCKER_GID in deploy/.env}"]
     depends_on:
       migrate: { condition: service_completed_successfully }
     restart: unless-stopped
@@ -33,11 +52,11 @@ services:
     image: pgvector/pgvector:pg16
     environment:
       DATABASE_URL: postgres://${POSTGRES_USER:-agent}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB:-agent_platform}
-      ARTIFACTS_DIR: /data/artifacts
+      ARTIFACTS_DIR: ${DATA_PATH}/artifacts
       BACKUP_DIR: /backups
       BACKUP_KEEP_DAYS: ${BACKUP_KEEP_DAYS:-30}
     volumes:
-      - appdata:/data:ro
+      - ${DATA_PATH}:${DATA_PATH}:ro
       - ./backups:/backups
       - ./backup.sh:/usr/local/bin/backup.sh:ro
     entrypoint: ["/bin/sh", "-c", "while true; do bash /usr/local/bin/backup.sh || echo 'backup failed'; sleep 86400; done"]
@@ -45,4 +64,8 @@ services:
     restart: unless-stopped
 volumes:
   pgdata: {}
-  appdata: {}
+secrets:
+  # Optional: CA of a TLS-inspecting proxy, used only while building (bun install). The file must be
+  # inside deploy/ (compose refuses build secrets from elsewhere); the default is an empty file.
+  build_ca:
+    file: ${BUILD_CA_FILE:-./build-ca.empty}

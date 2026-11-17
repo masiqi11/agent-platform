@@ -13,6 +13,7 @@ import { agent, budget, credential, llmCall, model, modelProvider, project, sess
 import type { Identity } from "../identity/service";
 import { SCRIPTS, type ScriptReply } from "./scripts";
 import { createCredentialUseAudit } from "../../core/credential-use";
+import { appendFileSync } from "node:fs";
 
 type ProviderRow = typeof modelProvider.$inferSelect;
 type ModelRow = typeof model.$inferSelect;
@@ -829,6 +830,12 @@ export function createLlm(d: { config: Config; db: Database; audit: Audit; event
         if (toolMode !== "none" || repaired) {
           await db.root.update(llmCall).set({ toolMode, repaired }).where(eq(llmCall.id, a.callId));
         }
+        // S8-7 replay fixtures: what the model answered, per purpose — never the prompt; redacted.
+        if (d.config.llmRecordFile)
+          appendFileSync(
+            d.config.llmRecordFile,
+            `${JSON.stringify({ purpose: input.purpose, model: m.name, tools: (input.tools ?? []).map((x) => x.name), content: redactValue(content), toolCalls: JSON.parse(redactValue(JSON.stringify(toolCalls))) })}\n`,
+          );
         return { content, toolCalls, toolMode, json, valid, repaired, model: m.name, providerId: p.id, tokensIn: tin, tokensOut: tout, cost, latencyMs, usedFallback: Boolean(prev) };
       } catch (e) {
         if (e instanceof BudgetExceeded) throw e;

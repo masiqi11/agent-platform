@@ -1,3 +1,4 @@
+import { readFileSync } from "node:fs";
 import { asText, type ParsedToolCall } from "@ap/shared";
 
 /** Scripted model (LLM-13): deterministic, in-process, first-class for CI and demos. */
@@ -491,7 +492,32 @@ export const injectedScript: Script = (req) => {
   return demoScript(req);
 };
 
+/**
+ * S8-7: replays a recorded real-model run (LLM_RECORD_FILE → test/fixtures/replay/*.jsonl). Each
+ * purpose gets its recorded replies in order; tool calls the current request can't take are dropped;
+ * once a purpose runs out it falls back to the demo script. Fixture: LLM_REPLAY_FILE.
+ */
+const replayState: { file?: string; byPurpose: Map<string, Array<{ content: string; toolCalls?: ParsedToolCall[] }>> } = { byPurpose: new Map() };
+export const replayScript: Script = (req) => {
+  const file = process.env.LLM_REPLAY_FILE;
+  if (file && replayState.file !== file) {
+    replayState.file = file;
+    replayState.byPurpose.clear();
+    const text = readFileSync(file, "utf8");
+    for (const line of text.split("\n").filter(Boolean)) {
+      const r = JSON.parse(line) as { purpose: string; content: string; toolCalls?: ParsedToolCall[] };
+      const list = replayState.byPurpose.get(r.purpose) ?? [];
+      list.push({ content: r.content, toolCalls: r.toolCalls });
+      replayState.byPurpose.set(r.purpose, list);
+    }
+  }
+  const next = replayState.byPurpose.get(req.purpose)?.shift();
+  if (!next) return demoScript(req);
+  return { content: next.content, toolCalls: (next.toolCalls ?? []).filter((c) => req.toolNames.includes(c.name)) };
+};
+
 export const SCRIPTS: Record<string, Script> = {
+  replay: replayScript,
   injected: injectedScript,
   demo: demoScript,
   nonsense: nonsenseScript,

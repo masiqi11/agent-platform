@@ -65,6 +65,8 @@ export const serverSchema = {
   LLM_EMBEDDING_MODEL: z.string().optional(),
   /** Wire APIs the bootstrap endpoint accepts for the harness proxy, e.g. "chat,responses,messages". */
   LLM_APIS: z.string().optional(),
+  /** Record every model completion (purpose, tools, reply — redacted) as JSON lines: replay fixtures (S8-7). */
+  LLM_RECORD_FILE: z.string().optional(),
   /** §14.5 SSRF guard on server-side requests (model providers, SCM). Default: on in production. */
   OUTBOUND_GUARD: z.enum(["on", "off"]).optional(),
   /** Internal targets allowed through the guard: hosts, host:port or IPv4 CIDRs, comma-separated. */
