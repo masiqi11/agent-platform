@@ -126,6 +126,11 @@ describe("S4 captain — scripted model (exit criteria)", () => {
     const assign = (await t.s.db.root.select().from(proposal).where(eq(proposal.kind, "assign"))).find((p) => p.payload.taskId === tk!.id);
     expect(assign!.payload.assigneeAgentId).toBe(dev.id);
     expect(String(assign!.payload.reason)).toContain("负载最低");
+    // Confirming the assignment makes the backlog task ready (found live in S8-7: it stayed in backlog).
+    const ok = await t.req("POST", `/api/v1/proposals/${assign!.id}/accept`, { token: owner });
+    expect(ok.status).toBe(200);
+    const [after2] = await t.s.db.root.select().from(task).where(eq(task.id, tk!.id));
+    expect(after2).toMatchObject({ assigneeAgentId: dev.id, status: "ready" });
     void m;
   });
 
