@@ -103,7 +103,7 @@ export function ChatPage({ projectId, groupId: gParam, seq, threadId }: { projec
   const p = project.data;
 
   return (
-    <div className="grid min-h-0 w-full grid-cols-[248px_minmax(0,1fr)] xl:grid-cols-[248px_minmax(0,1fr)_300px]">
+    <div className="grid min-h-0 w-full grid-cols-[minmax(0,1fr)] md:grid-cols-[248px_minmax(0,1fr)] xl:grid-cols-[248px_minmax(0,1fr)_300px]">
       <LeftColumn q={q} setQ={setQ} projectId={projectId} groups={groups.data} activeGroupId={groupId} activeThreadId={threadId} canManage={p.canManage} archived={p.status === "archived"} />
       {groupId && group ? (
         <ConversationColumn
@@ -167,7 +167,7 @@ function LeftColumn({
   const terms = debounced.split(/\s+/).filter(Boolean);
 
   return (
-    <aside className="flex min-h-0 flex-col border-r bg-sidebar/40" aria-label="群与线程">
+    <aside className="hidden min-h-0 flex-col border-r bg-sidebar/40 md:flex" aria-label="群与线程">
       <div className="min-h-0 flex-1 overflow-y-auto p-2">
         {debounced ? (
           search.isPending ? (
@@ -567,7 +567,7 @@ function ConversationColumn({
             {members.data ? ` · ${members.data.filter((m) => m.kind === "agent").length} 个 Agent` : ""} · 按 seq 排序
           </p>
         </div>
-        <div className="relative w-64 shrink-0">
+        <div className="relative w-36 shrink-0 sm:w-64">
           <Search className="pointer-events-none absolute top-1/2 left-3 size-3.5 -translate-y-1/2 text-muted-foreground" aria-hidden />
           <Input value={q} onChange={(e) => setQ(e.target.value)} placeholder="搜索本项目消息" className="h-9 rounded-full bg-card pl-8 text-sm" aria-label="搜索消息" data-testid="chat-search" />
           {q && (

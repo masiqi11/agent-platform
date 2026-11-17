@@ -91,7 +91,7 @@ function InboxNav({ collapsed }: { collapsed: boolean }) {
 function Section({ label, collapsed, children }: { label: string; collapsed: boolean; children: ReactNode }) {
   return (
     <div className="mt-5">
-      {!collapsed && <p className="mb-1 px-2 text-[11px] font-medium uppercase tracking-wider text-muted-foreground/80">{label}</p>}
+      {!collapsed && <p className="mb-1 px-2 text-[11px] font-medium uppercase tracking-wider text-muted-foreground">{label}</p>}
       <div className="space-y-0.5">{children}</div>
     </div>
   );

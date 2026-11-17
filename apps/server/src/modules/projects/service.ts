@@ -89,7 +89,10 @@ export function createProjects(d: ProjectDeps) {
       .groupBy(task.projectId, task.status);
     const agents = await db.root.select({ projectId: agent.projectId, id: agent.id, name: agent.name, role: agent.role, status: agent.status }).from(agent).where(inArray(agent.projectId, ids));
     const lastActivity = await db.root.execute<{ project_id: string; at: Date | null }>(
-      sql`select g.project_id, max(m.created_at) as at from chat_group g left join message m on m.group_id = g.id where g.project_id in ${ids} group by g.project_id`,
+      // Latest message per group via (group_id, seq) — one index probe per group, not a scan of every message (§15.1).
+      sql`select g.project_id, max(l.at) as at from chat_group g
+          left join lateral (select m.created_at as at from message m where m.group_id = g.id order by m.seq desc limit 1) l on true
+          where g.project_id in ${ids} group by g.project_id`,
     );
     const actMap = new Map((lastActivity as unknown as { rows: Array<{ project_id: string; at: string | null }> }).rows.map((r) => [r.project_id, r.at]));
     return rows.map((p) => {

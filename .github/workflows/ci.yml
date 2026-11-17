@@ -29,6 +29,8 @@ jobs:
         run: cd apps/server && bun x drizzle-kit generate --name drift-check | tee /tmp/drift.txt && grep -q "No schema changes" /tmp/drift.txt
       - run: bun run test
       - run: bun run build
+      - name: front-end budget (§13.10)
+        run: bun scripts/check-web-budget.ts
       - name: e2e (Playwright, scripted model)
         run: cd apps/web && bun x playwright install --with-deps chromium && bun x --no-install playwright test
   image:
