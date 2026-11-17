@@ -1,4 +1,4 @@
-import { estimateTokens, extractFirstJson, tokenize, parseTextToolCalls, type ParsedToolCall, type ProjectSettings } from "@ap/shared";
+import { estimateTokens, extractFirstJson, tokenize, parseTextToolCalls, stripDsml, type ParsedToolCall, type ProjectSettings } from "@ap/shared";
 import { and, asc, desc, eq, gte, sql } from "drizzle-orm";
 import type { Audit } from "../../core/audit";
 import type { Ctx } from "../../core/context";
@@ -813,7 +813,8 @@ export function createLlm(d: { config: Config; db: Database; audit: Audit; event
           toolCalls = parseTextToolCalls(a.r.content);
           if (toolCalls.length) toolMode = "text";
         }
-        let content = a.r.content;
+        // A provider's own tool-call markup left in the text is never shown to people (S8-7, DeepSeek).
+        let content = stripDsml(a.r.content);
         let json: unknown;
         let valid = true;
         let repaired = false;

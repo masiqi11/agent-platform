@@ -72,8 +72,63 @@ export function extractJsonBlocks(text: string): string[] {
   return blocks;
 }
 
-export function parseTextToolCalls(text: string, allowedNames?: readonly string[]): ParsedToolCall[] {
+/**
+ * DeepSeek's native tool-call markup ("DSML"), which its API sometimes leaves in the text content
+ * instead of returning structured tool_calls (seen live with deepseek-flash, S8-7):
+ *
+ *   <｜｜DSML｜｜ calls>
+ *   <｜｜DSML｜｜ invoke name="ask_question">
+ *   <｜｜DSML｜｜ parameter name="question" string="true">…</｜｜DSML｜｜ parameter>
+ *   <｜｜DSML｜｜ parameter name="options" string="false">["a","b"]</｜｜DSML｜｜ parameter>
+ *   </｜｜DSML｜｜ invoke>
+ *   </｜｜DSML｜｜ calls>
+ *
+ * `string="false"` values are JSON. Bars may be ASCII or fullwidth, single or doubled.
+ */
+const DSML = String.raw`[|｜]{1,2}\s*DSML\s*[|｜]{1,2}`;
+const DSML_BLOCK = new RegExp(String.raw`<${DSML}\s*(?:function_)?calls>[\s\S]*?(?:</${DSML}\s*(?:function_)?calls>|$)`, "g");
+
+export function parseDsmlToolCalls(text: string, allowedNames?: readonly string[]): ParsedToolCall[] {
+  if (!/DSML/.test(text)) return [];
   const allowed = allowedNames ? new Set(allowedNames) : undefined;
+  const out: ParsedToolCall[] = [];
+  const invoke = new RegExp(String.raw`<${DSML}\s*invoke\s+name="([^"]+)"\s*>([\s\S]*?)</${DSML}\s*invoke>`, "g");
+  const param = new RegExp(String.raw`<${DSML}\s*parameter\s+name="([^"]+)"(?:\s+string="(true|false)")?\s*>([\s\S]*?)</${DSML}\s*parameter>`, "g");
+  for (const m of text.matchAll(invoke)) {
+    const name = m[1]!;
+    if (allowed && !allowed.has(name)) continue;
+    const args: Record<string, unknown> = {};
+    for (const pm of (m[2] ?? "").matchAll(param)) {
+      const raw = pm[3] ?? "";
+      args[pm[1]!] = pm[2] === "false" ? (tryJson(raw.trim()) ?? raw) : raw;
+    }
+    out.push({ name, arguments: args });
+  }
+  return out;
+}
+
+/** Text with any DSML tool-call blocks removed (what a person should see). */
+export function stripDsml(text: string): string {
+  return /DSML/.test(text)
+    ? text
+        .replace(DSML_BLOCK, "")
+        .replace(/\n{3,}/g, "\n\n")
+        .trim()
+    : text;
+}
+
+export function parseTextToolCalls(text: string, allowedNames?: readonly string[]): ParsedToolCall[] {
+  const dsml = parseDsmlToolCalls(text, allowedNames);
+  if (dsml.length) return dsml;
+  const allowed = allowedNames ? new Set(allowedNames) : undefined;
+  // `<tool_call>name {json}</tool_call>` — the name outside the JSON (seen live with deepseek-flash
+  // when the model is used without native tools).
+  const named: ParsedToolCall[] = [];
+  for (const m of text.matchAll(/<tool_call>\s*([A-Za-z_][\w.-]*)\s*(\{[\s\S]*?\})\s*<\/tool_call>/g)) {
+    const args = tryJson(m[2]!);
+    if (args && typeof args === "object" && !Array.isArray(args) && (!allowed || allowed.has(m[1]!))) named.push({ name: m[1]!, arguments: args as Record<string, unknown> });
+  }
+  if (named.length) return named;
   for (const block of extractJsonBlocks(text)) {
     const v = tryJson(block);
     if (v === undefined) continue;

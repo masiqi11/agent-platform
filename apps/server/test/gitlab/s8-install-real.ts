@@ -58,7 +58,8 @@ try {
     isExternal: true,
     apiKey: env("LLM_API_KEY"),
     apis: ["chat", "responses", "messages"],
-    models: [{ name: MODEL, contextWindow: 200_000 }],
+    // Same as the console's「添加供应商」form defaults: tool calls and JSON on.
+    models: [{ name: MODEL, contextWindow: 200_000, supportsTools: true, supportsJson: true }],
   });
   const test = await api<{ ok: boolean; latencyMs: number; error?: string }>("POST", `/admin/models/providers/${prov.id}/test`);
   await api("PUT", "/admin/models/default", { name: MODEL });
@@ -82,7 +83,10 @@ try {
   mark("GitLab repo bound (access check)", bound.check.ok, JSON.stringify(bound.check.warnings ?? []));
 
   const messages = async () =>
-    (await api<{ items: Array<{ id: string; authorPrincipalId: string; body: string; kind: string; seq: number }> }>("GET", `/groups/${p.mainGroupId}/messages?limit=50`)).items;
+    (await api<{ items: Array<{ id: string; author: { principalId: string }; body: string; kind: string; seq: number }> }>("GET", `/groups/${p.mainGroupId}/messages?limit=50`)).items.map((m) => ({
+      ...m,
+      authorPrincipalId: m.author.principalId,
+    }));
   const say = (body: string) => api("POST", `/groups/${p.mainGroupId}/messages`, { body });
 
   // ── 1–2: ask the captain; it restates and asks for what's missing ──
