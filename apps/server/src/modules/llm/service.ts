@@ -461,7 +461,8 @@ export function createLlm(d: { config: Config; db: Database; audit: Audit; event
     if (req.tools?.length && m.supportsTools) body.tools = toolDefs(req.tools);
     if (req.json && m.supportsJson && !req.tools?.length) body.response_format = { type: "json_object" };
     if (stream) body.stream_options = { include_usage: true };
-    return withTimeout(async (signal, mark) => {
+    let malformedStream = false;
+    const reply = await withTimeout(async (signal, mark) => {
       const res = await doFetch(`${p.baseUrl.replace(/\/$/, "")}/chat/completions`, {
         method: "POST",
         signal,
@@ -470,21 +471,28 @@ export function createLlm(d: { config: Config; db: Database; audit: Audit; event
       });
       if (!res.ok) throw httpError(res.status, await res.text());
       const out: RawReply = { content: "", toolCalls: [] };
-      const partial: Record<number, { name: string; args: string }> = {};
+      // Keyed by tool-call id when the stream gives one: some gateways (seen on a Claude relay) send
+      // every parallel call with index 0, so the index alone would glue their arguments together.
+      const partial = new Map<string, { name: string; args: string }>();
+      const openAt = new Map<number, string>();
       let refused = false;
       const take = (j: Record<string, unknown>, delta: boolean) => {
         const ch = ((j.choices as unknown[]) ?? [])[0] as Record<string, unknown> | undefined;
         if (ch?.finish_reason === "content_filter") refused = true;
-        const msg = (delta ? ch?.delta : ch?.message) as { content?: string; tool_calls?: Array<{ index?: number; function?: { name?: string; arguments?: string } }> } | undefined;
+        const msg = (delta ? ch?.delta : ch?.message) as { content?: string; tool_calls?: Array<{ index?: number; id?: string; function?: { name?: string; arguments?: string } }> } | undefined;
         if (msg?.content) {
           out.content += msg.content;
           if (delta) req.onDelta?.(msg.content);
         }
         for (const [i, tc] of (msg?.tool_calls ?? []).entries()) {
-          const k = tc.index ?? i;
-          partial[k] ??= { name: "", args: "" };
-          if (tc.function?.name) partial[k].name += tc.function.name;
-          if (tc.function?.arguments) partial[k].args += tc.function.arguments;
+          const idx = tc.index ?? i;
+          // A fragment with an id opens (or continues) that call; id-less fragments continue the call last opened at this index.
+          const key = tc.id ?? openAt.get(idx) ?? `#${idx}`;
+          openAt.set(idx, key);
+          let cur = partial.get(key);
+          if (!cur) partial.set(key, (cur = { name: "", args: "" }));
+          if (tc.function?.name) cur.name += tc.function.name;
+          if (tc.function?.arguments) cur.args += tc.function.arguments;
         }
         const u = j.usage as { prompt_tokens?: number; completion_tokens?: number } | undefined;
         if (u) {
@@ -496,7 +504,9 @@ export function createLlm(d: { config: Config; db: Database; audit: Audit; event
         await readLines(
           res,
           (l) => {
-            const data = l.replace(/^data:\s*/, "");
+            // SSE: only `data:` lines carry chunks; `: ping` comments, `event:`, `id:`, `retry:` are skipped.
+            if (!l.startsWith("data:")) return;
+            const data = l.slice(5).trim();
             if (data && data !== "[DONE]") take(JSON.parse(data) as Record<string, unknown>, true);
           },
           mark,
@@ -506,17 +516,24 @@ export function createLlm(d: { config: Config; db: Database; audit: Audit; event
         take((await res.json()) as Record<string, unknown>, false);
       }
       if (refused) throw new ProviderError("模型拒答（content_filter）", false, "refused");
-      for (const pc of Object.values(partial)) {
+      for (const pc of partial.values()) {
         let args: Record<string, unknown> = {};
         try {
           args = JSON.parse(pc.args || "{}") as Record<string, unknown>;
         } catch {
-          /* malformed args → dropped by validation */
+          // Malformed args → empty; tool validation rejects the call and the caller's fallback applies.
+          log.warn("llm.tool_args_malformed", { model: m.name, tool: pc.name, length: pc.args.length, stream });
+          if (stream) malformedStream = true;
         }
         if (pc.name) out.toolCalls.push({ name: pc.name, arguments: args });
       }
       return out;
     });
+    // Some gateways mislabel parallel tool-call fragments when streaming (all arguments under one
+    // index, interleaved), which no client can reassemble. The same request without streaming is
+    // correct there, so retry once that way; the streamed text was only a live preview.
+    if (malformedStream) return callOpenAi(m, p, key, { ...req, onDelta: undefined });
+    return reply;
   }
 
   async function callScripted(m: ModelRow, req: CompleteInput): Promise<RawReply> {

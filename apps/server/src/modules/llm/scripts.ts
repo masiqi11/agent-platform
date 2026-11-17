@@ -414,11 +414,28 @@ export const rogueScript: Script = (req) => {
   };
 };
 
+/**
+ * Looks things up before acting, like strong models do: first turn → search_knowledge only; once
+ * the tool results are in the conversation → propose_task. Exercises the captain's read-tool loop.
+ */
+export const searchFirstScript: Script = (req) => {
+  if (req.purpose !== "captain.turn") return demoScript(req);
+  const all = req.messages.map((m) => m.content).join("\n");
+  if (!all.includes("<tool_result")) return { content: "我先查一下知识库。", toolCalls: [{ name: "search_knowledge", arguments: { query: "导出 CSV" } }] };
+  return {
+    content: "查过了，知识库里没有相关实现，整理成任务提议：",
+    toolCalls: [
+      { name: "propose_task", arguments: { title: "导出功能支持 CSV", description: "导出支持 CSV 格式（检索后提议）", type: "feature", priority: "P2", acceptanceCriteria: ["支持中文表头"] } },
+    ],
+  };
+};
+
 export const SCRIPTS: Record<string, Script> = {
   demo: demoScript,
   nonsense: nonsenseScript,
   text_tools: textToolsScript,
   rogue: rogueScript,
+  search_first: searchFirstScript,
 };
 
 /** Extra scripts registered by tests. */

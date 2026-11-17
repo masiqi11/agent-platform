@@ -1,21 +1,30 @@
 /**
- * S4 exit scenario against a REAL local model (Ollama, gemma4:e2b, think:false).
+ * S4 exit scenario against a REAL model (default: local Ollama gemma4:e2b, think:false).
  * Not part of CI. Run: bun test/ollama/s4-scenario.ts  (needs TEST_DATABASE_URL and Ollama on :11434)
- * Writes docs/results/s4-ollama.json and prints a table. Each step records whether the model
+ * Any OpenAI-compatible endpoint: LLM_BASE_URL=https://…/v1 LLM_MODEL=… LLM_API_KEY=… RESULT=s4-<name>.
+ * Writes docs/results/$RESULT.json (default s4-ollama) and prints a table. Each step records whether the model
  * itself produced the result or the deterministic fallback did.
  */
 import { and, desc, eq } from "drizzle-orm";
 import { writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { llmCall, message, proposal, question, summary, task } from "../../src/db/schema";
+import { llmCall, message, proposal, question, sessionTurn, summary, task } from "../../src/db/schema";
 import { registerHandlers } from "../../src/modules/registry";
 import { createTestApp } from "../helpers";
 
-const MODEL = process.env.OLLAMA_MODEL ?? "gemma4:e2b";
+const MODEL = process.env.LLM_MODEL ?? process.env.OLLAMA_MODEL ?? "gemma4:e2b";
+const BASE = process.env.LLM_BASE_URL ?? "http://127.0.0.1:11434";
+const RESULT = process.env.RESULT ?? "s4-ollama";
 process.env.LLM_TIMEOUT_MS = "240000";
 process.env.LLM_FIRST_BYTE_MS = "200000";
 process.env.LLM_BACKOFF_MS = "1000";
-const t = await createTestApp("s4ollama", { LLM_BASE_URL: "http://127.0.0.1:11434", LLM_MODEL: MODEL, LLM_TIMEOUT_MS: "240000", LLM_FIRST_BYTE_MS: "200000" });
+const t = await createTestApp("s4ollama", {
+  LLM_BASE_URL: BASE,
+  LLM_MODEL: MODEL,
+  ...(process.env.LLM_API_KEY ? { LLM_API_KEY: process.env.LLM_API_KEY } : {}),
+  LLM_TIMEOUT_MS: "240000",
+  LLM_FIRST_BYTE_MS: "200000",
+});
 const PW = "Correct-Horse-42";
 const owner = (await t.req("POST", "/api/v1/setup", { body: { tenantName: "Ollama", email: "o@o.test", name: "王负责人", password: PW } })).body.token as string;
 const p = (await t.req("POST", "/api/v1/projects", { token: owner, body: { key: "PAY", name: "支付服务", description: "支付网关、回调与对账" } })).body;
@@ -132,7 +141,7 @@ const calls = await t.s.db.root.select().from(llmCall);
 const ok = calls.filter((c) => c.status === "ok" && c.model === MODEL);
 const stat = {
   model: MODEL,
-  think: false,
+  endpoint: new URL(BASE).host,
   calls: calls.length,
   ok: ok.length,
   errors: calls.filter((c) => c.status !== "ok").length,
@@ -140,10 +149,15 @@ const stat = {
   tokensPerSec: Number((ok.reduce((a, c) => a + c.tokensOut, 0) / Math.max(1, ok.reduce((a, c) => a + c.latencyMs, 0) / 1000)).toFixed(1)),
   toolModes: ok.reduce<Record<string, number>>((a, c) => ((a[c.toolMode ?? "none"] = (a[c.toolMode ?? "none"] ?? 0) + 1), a), {}),
   repaired: ok.filter((c) => c.repaired).length,
+  // Tool calls the platform rejected (validation / permission), so a fallback had to step in.
+  rejectedTools: (await t.s.db.root.select().from(sessionTurn).where(eq(sessionTurn.role, "tool")))
+    .filter((x) => /"ok":false|error/.test(x.content))
+    .map((x) => ({ call: JSON.stringify(x.toolCalls).slice(0, 400), result: x.content.slice(0, 400) })),
+  failures: calls.filter((c) => c.status !== "ok").map((c) => ({ purpose: c.purpose, status: c.status, error: (c.error ?? "").slice(0, 300) })),
   byPurpose: Object.fromEntries([...new Set(ok.map((c) => c.purpose))].map((pu) => [pu, ok.filter((c) => c.purpose === pu).map((c) => c.latencyMs)])),
 };
-const out = { ranAt: new Date().toISOString(), host: "本机 CPU（8 核，无 GPU）", steps, stat };
-writeFileSync(join(import.meta.dir, "../../../../docs/results/s4-ollama.json"), JSON.stringify(out, null, 2));
+const out = { ranAt: new Date().toISOString(), host: process.env.RESULT_HOST ?? "本机 CPU（8 核，无 GPU）", steps, stat };
+writeFileSync(join(import.meta.dir, `../../../../docs/results/${RESULT}.json`), `${JSON.stringify(out, null, 2)}\n`);
 process.stdout.write(JSON.stringify(stat, null, 2) + "\n");
 await t.close();
 process.exit(0);

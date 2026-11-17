@@ -94,7 +94,7 @@ describe("S4 model gateway", () => {
     expect(r.tokensOut).toBe(2);
   });
 
-  test("OpenAI SSE with streamed tool_call fragments; key sent but never stored in plaintext", async () => {
+  test("OpenAI SSE with streamed tool_call fragments, keep-alive comments and event lines; key sent but never stored in plaintext", async () => {
     await provider("远端", "openai", [{ name: "remote-small", supportsTools: true }], { isExternal: true, apiKey: "test-key-not-real-0042" });
     handler = () => {
       const chunks = [
@@ -103,7 +103,9 @@ describe("S4 model gateway", () => {
         { choices: [{ delta: { tool_calls: [{ index: 0, function: { arguments: '"修复"}' } }] } }] },
         { choices: [], usage: { prompt_tokens: 11, completion_tokens: 4 } },
       ];
-      return new Response(chunks.map((c) => `data: ${JSON.stringify(c)}\n\n`).join("") + "data: [DONE]\n\n", { headers: { "content-type": "text/event-stream" } });
+      // Real gateways interleave `: ping` keep-alives and `event:` lines (found on a relay in front of Claude).
+      const body = chunks.map((c, i) => `${i === 1 ? ": ping\n\n" : ""}event: message\ndata: ${JSON.stringify(c)}\n\n`).join("") + ": ping\n\ndata: [DONE]\n\n";
+      return new Response(body, { headers: { "content-type": "text/event-stream" } });
     };
     const r = await t.s.llm.complete(ctx, {
       purpose: "test.sse",
@@ -123,6 +125,83 @@ describe("S4 model gateway", () => {
     expect(list.providers.find((p: { name: string }) => p.name === "远端").keyLast4).toBe("0042");
     const [row] = await t.s.db.root.select().from(llmCall).where(eq(llmCall.purpose, "test.sse"));
     expect(row!.dataClasses).toEqual(["chat"]);
+  });
+
+  test("parallel tool calls streamed with the same index but different ids stay separate", async () => {
+    handler = () => {
+      const tc = (x: Record<string, unknown>) => ({ choices: [{ delta: { tool_calls: [x] } }] });
+      const chunks = [
+        tc({ index: 0, id: "toolu_a", type: "function", function: { name: "search_knowledge", arguments: "" } }),
+        tc({ index: 0, function: { arguments: '{"query": "支付' } }),
+        tc({ index: 0, function: { arguments: ' 超时"}' } }),
+        tc({ index: 0, id: "toolu_b", type: "function", function: { name: "ask_question", arguments: "" } }),
+        tc({ index: 0, function: { arguments: '{"question": "从什么时候开始？"}' } }),
+        { choices: [{ delta: {}, finish_reason: "tool_calls" }] },
+      ];
+      return new Response(chunks.map((c) => `data: ${JSON.stringify(c)}\n\n`).join("") + "data: [DONE]\n\n", { headers: { "content-type": "text/event-stream" } });
+    };
+    const r = await t.s.llm.complete(ctx, {
+      purpose: "test.sse.parallel",
+      promptVersion: "v",
+      scope: {},
+      modelPolicy: { primary: "remote-small" },
+      messages: [{ role: "user", content: "x" }],
+      tools: [
+        { name: "search_knowledge", description: "s", parameters: {} },
+        { name: "ask_question", description: "q", parameters: {} },
+      ],
+      onDelta: () => {},
+    });
+    expect(r.toolCalls).toEqual([
+      { name: "search_knowledge", arguments: { query: "支付 超时" } },
+      { name: "ask_question", arguments: { question: "从什么时候开始？" } },
+    ]);
+  });
+
+  test("streamed tool arguments that cannot be reassembled → the same request is retried once without streaming", async () => {
+    // Pattern seen on a Claude relay: two calls opened at index 0 and 1, then every argument fragment under index 1, interleaved.
+    handler = (body) => {
+      if (!body.stream)
+        return Response.json({
+          choices: [
+            {
+              message: {
+                content: "",
+                tool_calls: [
+                  { id: "a", type: "function", function: { name: "search_knowledge", arguments: '{"query":"支付服务 /pay/callback"}' } },
+                  { id: "b", type: "function", function: { name: "search_knowledge", arguments: '{"query":"pay service timeout"}' } },
+                ],
+              },
+              finish_reason: "tool_calls",
+            },
+          ],
+        });
+      const tc = (x: Record<string, unknown>) => ({ choices: [{ delta: { tool_calls: [x] } }] });
+      const chunks = [
+        tc({ index: 0, id: "a", type: "function", function: { name: "search_knowledge", arguments: "" } }),
+        tc({ index: 0, function: { arguments: '{"query": "支付服务 /pa' } }),
+        tc({ index: 1, id: "b", type: "function", function: { name: "search_knowledge", arguments: "" } }),
+        tc({ index: 1, function: { arguments: '{"query": "p' } }),
+        tc({ index: 1, function: { arguments: 'y/callback"}' } }),
+        tc({ index: 1, function: { arguments: 'ay service timeout"}' } }),
+      ];
+      return new Response(chunks.map((c) => `data: ${JSON.stringify(c)}\n\n`).join("") + "data: [DONE]\n\n", { headers: { "content-type": "text/event-stream" } });
+    };
+    const before = seen.length;
+    const r = await t.s.llm.complete(ctx, {
+      purpose: "test.sse.mislabeled",
+      promptVersion: "v",
+      scope: {},
+      modelPolicy: { primary: "remote-small" },
+      messages: [{ role: "user", content: "x" }],
+      tools: [{ name: "search_knowledge", description: "s", parameters: {} }],
+      onDelta: () => {},
+    });
+    expect(seen.slice(before).map((x) => x.body.stream)).toEqual([true, false]);
+    expect(r.toolCalls).toEqual([
+      { name: "search_knowledge", arguments: { query: "支付服务 /pay/callback" } },
+      { name: "search_knowledge", arguments: { query: "pay service timeout" } },
+    ]);
   });
 
   test("LLM-10: secrets are redacted before leaving", async () => {
