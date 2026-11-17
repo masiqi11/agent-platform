@@ -2,6 +2,9 @@ import { expect, test } from "@playwright/test";
 import { apiToken, seedS5, shootBoth, watchConsole } from "./helpers";
 
 /**
+ * Named zz-… so it runs after the S-series specs (they expect a fresh database for S1 setup and the
+ * scripted provider listed first for S4).
+ *
  * ADR-0010 H4: an agent's execution engine + model + reasoning picker. Engines only see models whose
  * provider speaks their wire API (the rest are greyed with the reason); captains have no engine choice.
  */
