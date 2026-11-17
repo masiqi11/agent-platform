@@ -5,6 +5,8 @@ export interface Config {
   nodeEnv: Env["NODE_ENV"];
   /** Bearer token for GET /metrics. */
   metricsToken?: string;
+  /** §8.5 retention (cleanup job off unless enabled). */
+  retention: { enabled: boolean; eventsDays: number; jobsOkDays: number; jobsFailedDays: number; transcriptDays: number };
   isProd: boolean;
   role: Env["ROLE"];
   host: string;
@@ -49,6 +51,13 @@ export function createConfig(env: Env, cwd = process.cwd()): Config {
     nodeEnv: env.NODE_ENV,
     isProd,
     metricsToken: env.METRICS_TOKEN,
+    retention: {
+      enabled: env.RETENTION_ENABLED,
+      eventsDays: env.RETENTION_EVENTS_DAYS,
+      jobsOkDays: env.RETENTION_JOBS_OK_DAYS,
+      jobsFailedDays: env.RETENTION_JOBS_FAILED_DAYS,
+      transcriptDays: env.RETENTION_TRANSCRIPT_DAYS,
+    },
     role: env.ROLE,
     host: env.HOST,
     port: env.PORT,

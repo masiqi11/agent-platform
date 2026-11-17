@@ -1,3 +1,4 @@
+import { log } from "../core/logger";
 import { RetryLater } from "../core/jobs";
 import type { Services } from "../services";
 
@@ -83,4 +84,11 @@ export async function registerHandlers(s: Services): Promise<void> {
   await s.jobs.enqueue("flow.sweep", {}, { cron: "every:60000", dedupeKey: "cron:flow.sweep" });
   await s.jobs.enqueue("kb.weekly", {}, { cron: "every:604800000", dedupeKey: "cron:kb.weekly", runAt: new Date(Date.now() + 604_800_000) });
   await s.jobs.enqueue("workspace.sweep", {}, { cron: "every:600000", dedupeKey: "cron:workspace.sweep", runAt: new Date(Date.now() + 60_000) });
+  // §8.5 retention: off unless RETENTION_ENABLED; daily, first run an hour after start.
+  s.jobs.register("ops.retention", async () => {
+    if (!s.config.retention.enabled) return;
+    const r = await s.system.retention();
+    log.info("retention.done", r);
+  });
+  if (s.config.retention.enabled) await s.jobs.enqueue("ops.retention", {}, { cron: "every:86400000", dedupeKey: "cron:ops.retention", runAt: new Date(Date.now() + 3_600_000) });
 }

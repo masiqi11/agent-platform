@@ -1,17 +1,24 @@
 import { and, count, desc, eq, inArray, isNull, max, min, or, sql } from "drizzle-orm";
 import type { Audit } from "../../core/audit";
+import type { Vault } from "../../core/crypto";
+import { log } from "../../core/logger";
+import type { ObjectStore } from "../../core/object-store";
+import type { Config } from "../../config";
 import type { Ctx } from "../../core/context";
 import { conflict, notFound } from "../../core/errors";
 import { metrics } from "../../core/metrics";
 import type { Database } from "../../db";
 import { expectedMigration } from "../../db/migrate";
-import { auditLog, deadLetter, event, eventConsumer, job, llmCall, modelProvider, session } from "../../db/schema";
+import { auditLog, authSession, credential, deadLetter, event, eventConsumer, job, llmCall, modelProvider, session, sessionTurn, task, tenant } from "../../db/schema";
 import type { Identity } from "../identity/service";
 import type { Sandbox } from "../sandbox/service";
 import type { Workspaces } from "../workspaces/service";
 
 /** System status page (ADM-补3): db, migration, consumer lag, job backlog, dead letters, sandbox, providers, disk. */
 export function createSystem(d: {
+  config: Config;
+  vault: Vault;
+  objectStore: ObjectStore;
   db: Database;
   identity: Identity;
   audit: Audit;
@@ -238,6 +245,127 @@ export function createSystem(d: {
     });
   }
 
-  return { status, deadLetters, replay, discard, trace, metricsText };
+  /* ───────────── master key rotation (ADM-补1, §14.3) ───────────── */
+
+  /**
+   * Re-encrypts every credential not yet on the current master key version. Each one is decrypted,
+   * re-encrypted and decrypted again before it is saved, so a bad key never overwrites a working
+   * ciphertext. Idempotent: run it again after a partial failure. One audit entry per tenant.
+   */
+  async function rekeyCredentials() {
+    const target = d.vault.currentVersion;
+    const rows = await d.db.root.select().from(credential);
+    const byTenant = new Map<string, { rekeyed: number; failed: string[] }>();
+    for (const c of rows) {
+      const tally = byTenant.get(c.tenantId) ?? { rekeyed: 0, failed: [] };
+      byTenant.set(c.tenantId, tally);
+      if (c.keyVersion === target) continue;
+      try {
+        const plain = d.vault.decrypt(c.ciphertext, c.keyVersion);
+        const enc = d.vault.encrypt(plain);
+        if (d.vault.decrypt(enc.ciphertext, enc.keyVersion) !== plain) throw new Error("round trip mismatch");
+        await d.db.root
+          .update(credential)
+          .set({ ciphertext: enc.ciphertext, keyVersion: enc.keyVersion, updatedAt: new Date() })
+          .where(and(eq(credential.id, c.id), eq(credential.keyVersion, c.keyVersion)));
+        tally.rekeyed++;
+      } catch (e) {
+        tally.failed.push(c.id);
+        log.error("vault.rekey_failed", { credentialId: c.id, keyVersion: c.keyVersion, err: (e as Error).message });
+      }
+    }
+    for (const [tenantId, t] of byTenant) {
+      if (!t.rekeyed && !t.failed.length) continue;
+      const sys = await d.identity.systemCtx(tenantId);
+      await d.audit.write(sys, { action: "credential.rekey", resourceType: "tenant", resourceId: tenantId, outcome: "allowed", after: { toVersion: target, rekeyed: t.rekeyed, failed: t.failed } });
+    }
+    const all = [...byTenant.values()];
+    const remaining =
+      (
+        await d.db.root
+          .select({ n: count() })
+          .from(credential)
+          .where(sql`${credential.keyVersion} <> ${target}`)
+      )[0]?.n ?? 0;
+    return { toVersion: target, rekeyed: all.reduce((n, t) => n + t.rekeyed, 0), failed: all.flatMap((t) => t.failed), remaining };
+  }
+
+  /* ───────────── retention (§8.5) ───────────── */
+
+  /**
+   * One cleanup pass. Events are archived to the object store (JSON lines) before they are deleted,
+   * and only once every consumer has passed them; transcripts go only for tasks that ended long ago.
+   * Audit records are never touched here (append-only, archived by partition — not automated yet).
+   */
+  async function retention(now = new Date()) {
+    const r = d.config.retention;
+    const days = (n: number) => new Date(now.getTime() - n * 86_400_000);
+    const out = { events: 0, jobs: 0, deadLetters: 0, transcripts: 0, authSessions: 0, archive: null as string | null };
+
+    // Events: older than N days AND below every consumer's offset (never drop what a consumer hasn't processed).
+    const [low] = await d.db.root.select({ seq: min(eventConsumer.offsetSeq) }).from(eventConsumer);
+    const floor = low?.seq ?? 0;
+    const old = await d.db.root
+      .select()
+      .from(event)
+      .where(and(sql`${event.occurredAt} < ${days(r.eventsDays)}`, sql`${event.seq} <= ${floor}`))
+      .orderBy(event.seq)
+      .limit(50_000);
+    if (old.length) {
+      const key = `archive/events/${now.toISOString().slice(0, 10)}-${old[0]!.seq}-${old.at(-1)!.seq}.jsonl`;
+      const o = await d.objectStore.put(key, old.map((e) => JSON.stringify(e)).join("\n") + "\n");
+      out.archive = o.uri;
+      // Archived first; deleting by the exact range archived.
+      const del = await d.db.root
+        .delete(event)
+        .where(and(sql`${event.seq} >= ${old[0]!.seq}`, sql`${event.seq} <= ${old.at(-1)!.seq}`, sql`${event.occurredAt} < ${days(r.eventsDays)}`))
+        .returning({ id: event.id });
+      out.events = del.length;
+    }
+
+    // Jobs: succeeded after N days; failed / dead after M days. Recurring (cron) jobs are kept.
+    const jobs = await d.db.root
+      .delete(job)
+      .where(
+        and(
+          isNull(job.cron),
+          or(and(eq(job.status, "succeeded"), sql`${job.updatedAt} < ${days(r.jobsOkDays)}`), and(inArray(job.status, ["failed", "dead"]), sql`${job.updatedAt} < ${days(r.jobsFailedDays)}`)),
+        ),
+      )
+      .returning({ id: job.id });
+    out.jobs = jobs.length;
+    // Dead letters: handled ones after M days; open ones stay until someone acts on them.
+    const dls = await d.db.root
+      .delete(deadLetter)
+      .where(and(sql`${deadLetter.createdAt} < ${days(r.jobsFailedDays)}`, or(sql`${deadLetter.replayedAt} is not null`, sql`${deadLetter.discardedBy} is not null`)))
+      .returning({ id: deadLetter.id });
+    out.deadLetters = dls.length;
+
+    // Task session transcripts: N days after the task ended (done / cancelled). Sessions and usage stay.
+    const ended = d.db.root
+      .select({ id: session.id })
+      .from(session)
+      .innerJoin(task, sql`${session.scopeType} = 'task' and ${session.scopeId} = ${task.id}`)
+      .where(and(inArray(task.status, ["done", "cancelled"]), sql`${task.updatedAt} < ${days(r.transcriptDays)}`));
+    const turns = await d.db.root.delete(sessionTurn).where(inArray(sessionTurn.sessionId, ended)).returning({ id: sessionTurn.id });
+    out.transcripts = turns.length;
+
+    // Expired login sessions.
+    const auth = await d.db.root
+      .delete(authSession)
+      .where(sql`${authSession.expiresAt} < ${now}`)
+      .returning({ id: authSession.id });
+    out.authSessions = auth.length;
+
+    // §14 留痕: the cleanup itself is audited, in every tenant (single-tenant deployments: one entry).
+    if (out.events || out.jobs || out.deadLetters || out.transcripts || out.authSessions)
+      for (const t of await d.db.root.select({ id: tenant.id }).from(tenant)) {
+        const sys = await d.identity.systemCtx(t.id);
+        await d.audit.write(sys, { action: "retention.cleanup", resourceType: "tenant", resourceId: t.id, outcome: "allowed", after: { ...out, policy: r } });
+      }
+    return out;
+  }
+
+  return { status, deadLetters, replay, discard, trace, metricsText, rekeyCredentials, retention };
 }
 export type System = ReturnType<typeof createSystem>;

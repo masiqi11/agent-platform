@@ -68,6 +68,12 @@ export const serverSchema = {
   /** Comma-separated non-secret env names passed into harness runs (e.g. HTTPS_PROXY,NO_PROXY,NODE_EXTRA_CA_CERTS). */
   HARNESS_PASS_ENV: z.string().optional(),
   DEMO_MODE: bool.default(false),
+  /** Retention cleanup (§8.5): off unless explicitly enabled. Periods in days. */
+  RETENTION_ENABLED: bool.default(false),
+  RETENTION_EVENTS_DAYS: z.coerce.number().int().min(7).default(90),
+  RETENTION_JOBS_OK_DAYS: z.coerce.number().int().min(1).default(7),
+  RETENTION_JOBS_FAILED_DAYS: z.coerce.number().int().min(7).default(30),
+  RETENTION_TRANSCRIPT_DAYS: z.coerce.number().int().min(30).default(180),
   AGENTS_PAUSED: bool.default(false),
   DINGTALK_CLIENT_ID: z.string().optional(),
   DINGTALK_CLIENT_SECRET: z.string().optional(),
