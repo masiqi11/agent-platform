@@ -146,8 +146,9 @@ try {
     },
     45,
   );
-  const code = await api<{ mr?: { ref?: string; url?: string } | null; ci?: { status?: string } | null }>("GET", `/tasks/${taskId}/code`).catch(() => null);
-  mark("5–8 fix → MR → GitLab CI → review → test → merge approval requested", true, `path ${seen.join(" → ")}; MR ${code?.mr?.ref ?? "?"}; CI ${code?.ci?.status ?? "?"}`);
+  const code = await api<{ workspaces: Array<{ mrRef: string | null; mrUrl: string | null; ci: { status?: string } | null }> }>("GET", `/tasks/${taskId}/code`).catch(() => null);
+  const ws = code?.workspaces[0];
+  mark("5–8 fix → MR → GitLab CI → review → test → merge approval requested", Boolean(ws?.mrRef), `path ${seen.join(" → ")}; MR ${ws?.mrRef ?? "?"}; CI ${ws?.ci?.status ?? "?"}`);
 
   // ── 9: a human approves with the evidence; the merge queue merges ──
   await api("POST", `/approvals/${appr.id}/decide`, { decision: "approve", reason: "证据齐全，同意合并" });

@@ -65,4 +65,19 @@ describe("S8-7 record → replay", () => {
     expect((replayed!.payload as { title: string }).title).toBe((recorded!.payload as { title: string }).title);
     expect((replayed!.payload as { acceptanceCriteria: string[] }).acceptanceCriteria).toEqual((recorded!.payload as { acceptanceCriteria: string[] }).acceptanceCriteria);
   });
+
+  test("the real S8-7 recording (deepseek-flash, 2026-11-17) replays the captain's part to the same proposal", async () => {
+    const fixture = join(import.meta.dir, "fixtures", "s8-real-deepseek-flash.jsonl");
+    const real = readFileSync(fixture, "utf8")
+      .trim()
+      .split("\n")
+      .map((l) => JSON.parse(l) as { purpose: string; toolCalls: Array<{ name: string; arguments: Record<string, unknown> }> });
+    const proposed = real.flatMap((l) => (l.purpose === "captain.turn" ? l.toolCalls : [])).find((c) => c.name === "propose_task");
+    expect(proposed).toBeTruthy();
+    process.env.LLM_REPLAY_FILE = fixture;
+    const replayed = await conversation("scripted:replay", {});
+    delete process.env.LLM_REPLAY_FILE;
+    expect((replayed!.payload as { title: string }).title).toBe(String(proposed!.arguments.title));
+    expect((replayed!.payload as { acceptanceCriteria: string[] }).acceptanceCriteria.length).toBeGreaterThan(0);
+  });
 });
