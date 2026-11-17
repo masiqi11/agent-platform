@@ -1,6 +1,7 @@
 import { Elysia, t } from "elysia";
 import { base } from "../http";
 import { Ok } from "../schemas";
+import { ENGINES, ENGINE_API, ENGINE_LABEL } from "../modules/harness/adapters";
 import type { Services } from "../services";
 
 const Role = t.Union([t.Literal("sub_captain"), t.Literal("dev"), t.Literal("reviewer"), t.Literal("tester"), t.Literal("captain")]);
@@ -52,6 +53,11 @@ export const agentRoutes = (s: Services) =>
     .post("/projects/:id/agents", { params: t.Object({ id: t.String() }), body: t.Object({ ...Editable, role: Role }), response: AgentSchema }, async ({ auth, params, body }) =>
       s.agents.create(await auth(), params.id, body),
     )
+    // Agent config picker: engines (and the API each needs) + the models this project may use.
+    .get("/projects/:id/model-options", { params: t.Object({ id: t.String() }) }, async ({ auth, params }) => ({
+      engines: [{ id: "builtin", label: "内置", api: null }, ...ENGINES.map((e) => ({ id: e, label: ENGINE_LABEL[e], api: ENGINE_API[e] }))],
+      ...(await s.llm.modelOptions(await auth(), params.id)),
+    }))
     .get("/agents/:id", { params: t.Object({ id: t.String() }), response: AgentSchema }, async ({ auth, params }) => s.agents.get(await auth(), params.id))
     .patch("/agents/:id", { params: t.Object({ id: t.String() }), body: t.Partial(t.Object(Editable)), response: AgentSchema }, async ({ auth, params, body }) =>
       s.agents.update(await auth(), params.id, body),

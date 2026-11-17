@@ -11,6 +11,9 @@
 
 export const ENGINES = ["claude-code", "codex", "opencode", "pi"] as const;
 export type Engine = (typeof ENGINES)[number];
+/** The wire API each engine speaks to the model proxy (H0). */
+export const ENGINE_API: Record<Engine, "chat" | "responses" | "messages"> = { "claude-code": "messages", codex: "responses", opencode: "chat", pi: "chat" };
+export const ENGINE_LABEL: Record<Engine, string> = { "claude-code": "Claude Code", codex: "Codex", opencode: "OpenCode", pi: "pi" };
 export type HarnessRole = "dev" | "reviewer" | "tester";
 
 /** Normalized harness event, written to the session transcript. */

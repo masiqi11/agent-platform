@@ -878,6 +878,37 @@ export function createLlm(d: { config: Config; db: Database; audit: Audit; event
     };
   }
 
+  /**
+   * What an agent of this project can be configured with (ADR-0010 picker): chat models, which wire
+   * APIs their provider speaks (so the UI offers only what an engine can use), and what the project's
+   * egress policy rules out. No keys, URLs or prices: maintainers see this, not only admins.
+   */
+  async function modelOptions(ctx: Ctx, projectId: string) {
+    await d.identity.projectInTenant(ctx, projectId);
+    await d.identity.require(ctx, "project.view", { projectId });
+    await ensureDefaults(ctx.tenantId);
+    const ps = await db.root
+      .select()
+      .from(modelProvider)
+      .where(and(eq(modelProvider.tenantId, ctx.tenantId), eq(modelProvider.status, "active")));
+    const ms = await db.root.select().from(model).where(eq(model.tenantId, ctx.tenantId)).orderBy(asc(model.createdAt));
+    const out = [];
+    for (const m of ms) {
+      const p = ps.find((x) => x.id === m.providerId);
+      if (!p || m.embeddingDim) continue;
+      out.push({
+        name: m.name,
+        provider: p.name,
+        isExternal: p.isExternal,
+        // Harness engines reach models only through the proxy, which forwards to openai-compatible providers.
+        apis: p.kind === "openai_compatible" ? p.apis : [],
+        contextWindow: m.contextWindow,
+        blocked: await egressAllowed(projectId, p),
+      });
+    }
+    return { defaultModel: await defaultModelName(ctx.tenantId), models: out };
+  }
+
   async function createProvider(
     ctx: Ctx,
     input: {
@@ -1274,6 +1305,7 @@ export function createLlm(d: { config: Config; db: Database; audit: Audit; event
     budgetBlocked,
     tenantSettings,
     listProviders,
+    modelOptions,
     createProvider,
     testProvider,
     setDefaultModel,

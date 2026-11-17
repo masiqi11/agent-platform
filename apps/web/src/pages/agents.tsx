@@ -11,6 +11,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Textarea } from "@/components/ui/textarea";
+import { EngineModelPicker, type Engine, type Reasoning } from "@/components/engine-model-picker";
 import { api, unwrap } from "@/lib/api";
 import { useModels } from "@/lib/captain";
 import { useMe } from "@/lib/me";
@@ -19,6 +20,8 @@ import { AGENT_ROLE_LABEL, useAgents, useProject, type Agent } from "@/lib/proje
 import { StatusPill } from "@/components/task-bits";
 import { Link } from "@tanstack/react-router";
 import { qk, queryClient } from "@/lib/query";
+
+const ENGINE_LABEL: Record<string, string> = { builtin: "内置", "claude-code": "Claude Code", codex: "Codex", opencode: "OpenCode", pi: "pi" };
 
 const STATUS: Record<string, { tone: "ok" | "attention" | "idle"; label: string }> = {
   active: { tone: "ok", label: "启用" },
@@ -112,8 +115,13 @@ export function AgentsPage({ projectId }: { projectId: string }) {
                 </div>
                 <p className="mt-3 line-clamp-2 min-h-10 text-sm text-muted-foreground">{a.instructions || "使用角色默认指令。"}</p>
                 <dl className="mt-3 grid grid-cols-2 gap-y-1 text-xs">
+                  <dt className="text-muted-foreground">执行引擎</dt>
+                  <dd data-testid="agent-engine">{ENGINE_LABEL[a.engine] ?? a.engine}</dd>
                   <dt className="text-muted-foreground">模型</dt>
-                  <dd className="truncate font-mono">{model}</dd>
+                  <dd className="truncate font-mono">
+                    {model}
+                    {typeof a.modelPolicy.reasoning === "string" && <span className="ml-1 font-sans text-muted-foreground">· {a.modelPolicy.reasoning}</span>}
+                  </dd>
                   <dt className="text-muted-foreground">并发上限</dt>
                   <dd>{a.maxConcurrency}</dd>
                   <dt className="text-muted-foreground">工具</dt>
@@ -161,6 +169,10 @@ function AgentDialog({ projectId, agent, onClose, onSaved }: { projectId: string
   const [instructions, setInstructions] = useState(existing?.instructions ?? "");
   const [model, setModel] = useState(typeof existing?.modelPolicy.primary === "string" ? existing.modelPolicy.primary : "");
   const [fallback, setFallback] = useState(typeof existing?.modelPolicy.fallback === "string" ? existing.modelPolicy.fallback : "");
+  const [engine, setEngine] = useState<Engine>((existing?.engine as Engine | undefined) ?? "builtin");
+  const [reasoning, setReasoning] = useState<Reasoning | null>((existing?.modelPolicy.reasoning as Reasoning | undefined) ?? null);
+  const effectiveRole = existing?.role ?? role;
+  const codeWork = ["dev", "reviewer", "tester"].includes(effectiveRole);
   const [conc, setConc] = useState(existing?.maxConcurrency ?? 1);
   const [busy, setBusy] = useState(false);
   const { data: me } = useMe();
@@ -173,7 +185,15 @@ function AgentDialog({ projectId, agent, onClose, onSaved }: { projectId: string
         name: name.trim(),
         instructions,
         maxConcurrency: conc,
-        modelPolicy: { ...(model.trim() ? { primary: model.trim() } : {}), ...(fallback.trim() ? { fallback: fallback.trim() } : {}) },
+        ...(codeWork ? { engine } : {}),
+        modelPolicy: {
+          // Keep settings this dialog doesn't edit (temperature, maxTokens).
+          ...(typeof existing?.modelPolicy.temperature === "number" ? { temperature: existing.modelPolicy.temperature } : {}),
+          ...(typeof existing?.modelPolicy.maxTokens === "number" ? { maxTokens: existing.modelPolicy.maxTokens } : {}),
+          ...(model.trim() ? { primary: model.trim() } : {}),
+          ...(fallback.trim() ? { fallback: fallback.trim() } : {}),
+          ...(engine !== "builtin" && reasoning ? { reasoning } : {}),
+        },
       };
       if (isNew) await unwrap(api.api.v1.projects({ id: projectId }).agents.post({ ...common, role }));
       else if (agent) await unwrap(api.api.v1.agents({ id: agent.id }).patch(common));
@@ -188,7 +208,7 @@ function AgentDialog({ projectId, agent, onClose, onSaved }: { projectId: string
   }
   return (
     <Dialog open={agent !== null} onOpenChange={(v) => !v && onClose()}>
-      <DialogContent className="sm:max-w-lg">
+      <DialogContent className="max-h-[90vh] overflow-y-auto sm:max-w-lg">
         <DialogHeader>
           <DialogTitle>{isNew ? "新建 Agent" : "编辑 Agent"}</DialogTitle>
           <DialogDescription>Agent 是项目成员，可以被 @、分配任务；权限不会超过它的工具白名单。</DialogDescription>
@@ -217,14 +237,22 @@ function AgentDialog({ projectId, agent, onClose, onSaved }: { projectId: string
             <Label htmlFor="agent-ins">附加指令</Label>
             <Textarea id="agent-ins" value={instructions} onChange={(e) => setInstructions(e.target.value)} rows={4} placeholder="补充到角色默认指令之后，例如代码风格约定。" />
           </div>
-          <div className="grid gap-1.5">
-            <Label htmlFor="agent-fallback">备用模型（主模型失败或熔断时使用）</Label>
-            <Input id="agent-fallback" list="model-options" value={fallback} onChange={(e) => setFallback(e.target.value)} placeholder="可留空" className="font-mono" />
-          </div>
+          <EngineModelPicker
+            projectId={projectId}
+            engine={codeWork ? engine : "builtin"}
+            model={model}
+            reasoning={reasoning}
+            allowEngines={codeWork}
+            onChange={(v) => {
+              setEngine(v.engine);
+              setModel(v.model);
+              setReasoning(v.reasoning);
+            }}
+          />
           <div className="grid grid-cols-[1fr_120px] gap-3">
             <div className="grid gap-1.5">
-              <Label htmlFor="agent-model">模型（留空用租户默认）</Label>
-              <Input id="agent-model" list="model-options" value={model} onChange={(e) => setModel(e.target.value)} placeholder={models.data?.defaultModel ?? "gemma4:e2b"} className="font-mono" />
+              <Label htmlFor="agent-fallback">备用模型（主模型失败或熔断时使用）</Label>
+              <Input id="agent-fallback" list="model-options" value={fallback} onChange={(e) => setFallback(e.target.value)} placeholder="可留空" className="font-mono" />
               <datalist id="model-options">
                 {modelNames.map((n) => (
                   <option key={n} value={n} />
