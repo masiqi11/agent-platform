@@ -71,5 +71,7 @@ export interface Scm {
 
 /** Thrown when the SCM credential is rejected (401/403): the repo is marked credential_invalid. */
 export class ScmAuthError extends Error {}
+/** The credential is valid but lacks a specific right (e.g. merging into a protected branch): needs a human, the repo stays usable. */
+export class ScmPermissionError extends Error {}
 /** Merge/create not possible yet (TRAP-9: 405/406/422 after bounded retries). */
 export class ScmNotReady extends Error {}

@@ -7,7 +7,7 @@ import type { Ctx } from "../src/core/context";
 import { newId } from "../src/core/ids";
 import { auditLog, credential, event, repo, task, taskComment, workspace } from "../src/db/schema";
 import { createGitLabScm } from "../src/modules/scm/gitlab";
-import { ScmAuthError, ScmNotReady } from "../src/modules/scm/types";
+import { ScmAuthError, ScmNotReady, ScmPermissionError } from "../src/modules/scm/types";
 import { scanDiffForSecrets } from "../src/modules/workspaces/service";
 import { createTestApp, type TestApp } from "./helpers";
 
@@ -22,6 +22,7 @@ function fakeGitLab(token = "glpat-test-token-0123456789abcd") {
     protectedMain: true,
     calls: [] as string[],
     level: 30,
+    mergeLevel: 30,
   };
   const json = (status: number, body: unknown) => new Response(JSON.stringify(body), { status, headers: { "content-type": "application/json" } });
   const f = (async (input: string | URL | Request, init?: RequestInit) => {
@@ -38,7 +39,9 @@ function fakeGitLab(token = "glpat-test-token-0123456789abcd") {
     const rest = m[2] ?? "";
     if (!rest) return json(200, { id: 7, default_branch: "main", path_with_namespace: "pay/payments", permissions: { project_access: { access_level: st.level } } });
     if (rest.startsWith("/protected_branches/"))
-      return st.protectedMain && rest.endsWith("/main") ? json(200, { name: "main", allow_force_push: false, push_access_levels: [{ access_level: 40 }] }) : json(404, {});
+      return st.protectedMain && rest.endsWith("/main")
+        ? json(200, { name: "main", allow_force_push: false, push_access_levels: [{ access_level: 40 }], merge_access_levels: [{ access_level: st.mergeLevel }] })
+        : json(404, {});
     if (rest === "/issues" && method === "GET") {
       const label = url.searchParams.get("labels");
       return json(
@@ -131,6 +134,19 @@ describe("S5 GitLab provider (fake server)", () => {
     const before = gl.st.calls.length;
     await expect(scm.mergeMr(mr2.iid, "b".repeat(40))).rejects.toBeInstanceOf(ScmNotReady);
     expect(gl.st.calls.slice(before).filter((c) => c.includes("/merge")).length).toBe(3); // 1 + 2 retries
+  });
+
+  test("real GitLab: merge denied by branch protection answers 401 — reported as a permission problem, not a dead token", async () => {
+    const mr3 = await scm.openMr({ sourceBranch: "task/3", targetBranch: "main", title: "PAY-3", description: "d" });
+    gl.st.mergeResponses = [401];
+    const err = await scm.mergeMr(mr3.iid, "c".repeat(40)).catch((e: unknown) => e);
+    expect(err).toBeInstanceOf(ScmPermissionError);
+    expect(err).not.toBeInstanceOf(ScmAuthError);
+    expect(String((err as Error).message)).toContain("允许合并");
+    // The bind check warns up front when the token's role may not merge into the default branch.
+    gl.st.mergeLevel = 40;
+    expect((await scm.checkAccess()).warnings.join()).toContain("允许合并");
+    gl.st.mergeLevel = 30;
   });
 
   test("TRAP-9: issue sync is convergent — re-runs (even after losing the iid) never duplicate", async () => {
