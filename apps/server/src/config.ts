@@ -37,7 +37,7 @@ export interface Config {
   demoMode: boolean;
   agentsPaused: boolean;
   dingtalk: { clientId: string; clientSecret: string; robotCode?: string } | null;
-  worker: { concurrency: number; eventPollMs: number; jobPollMs: number };
+  worker: { concurrency: number; eventPollMs: number; jobPollMs: number; shutdownGraceMs: number };
 }
 
 /** Pure: derives paths/defaults from validated env (§7.1). */
@@ -146,6 +146,6 @@ export function createConfig(env: Env, cwd = process.cwd()): Config {
     demoMode: env.DEMO_MODE,
     agentsPaused: env.AGENTS_PAUSED,
     dingtalk: env.DINGTALK_CLIENT_ID && env.DINGTALK_CLIENT_SECRET ? { clientId: env.DINGTALK_CLIENT_ID, clientSecret: env.DINGTALK_CLIENT_SECRET, robotCode: env.DINGTALK_ROBOT_CODE } : null,
-    worker: { concurrency: env.WORKER_CONCURRENCY, eventPollMs: env.EVENT_POLL_MS, jobPollMs: env.JOB_POLL_MS },
+    worker: { concurrency: env.WORKER_CONCURRENCY, eventPollMs: env.EVENT_POLL_MS, jobPollMs: env.JOB_POLL_MS, shutdownGraceMs: env.SHUTDOWN_GRACE_MS },
   };
 }

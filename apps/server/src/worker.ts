@@ -11,6 +11,10 @@ export async function startWorker(s: Services, opts: { registerAll?: (s: Service
   await opts.registerAll?.(s);
   await s.consumers.init();
   let running = true;
+  // Loops sleep on this so stop() wakes them at once instead of waiting out a 15 s poll.
+  let wake!: () => void;
+  const stopped = new Promise<void>((r) => (wake = r));
+  const nap = (ms: number) => Promise.race([Bun.sleep(ms), stopped]);
   const loops: Promise<void>[] = [];
   const loop = (name: string, ms: number, fn: () => Promise<unknown>) =>
     loops.push(
@@ -21,7 +25,7 @@ export async function startWorker(s: Services, opts: { registerAll?: (s: Service
           } catch (err) {
             log.warn("worker.loop_error", { loop: name, err: (err as Error).message.slice(0, 300) });
           }
-          await Bun.sleep(ms);
+          await nap(ms);
         }
       })(),
     );
@@ -37,10 +41,17 @@ export async function startWorker(s: Services, opts: { registerAll?: (s: Service
   });
   loop("recover", 15_000, () => s.jobs.recoverExpired());
   return {
+    /**
+     * Graceful stop: no new claims, running jobs get up to SHUTDOWN_GRACE_MS to finish, then
+     * whatever is still running is released for another instance (handlers are idempotent, §11.4).
+     */
     async stop() {
       running = false;
+      wake();
       await s.consumers.release().catch(() => {});
-      await Promise.race([Promise.all([...loops, ...inflight]), Bun.sleep(10_000)]);
+      const t0 = Date.now();
+      await Promise.race([Promise.all([...loops, ...inflight]), Bun.sleep(s.config.worker.shutdownGraceMs)]);
+      if (inflight.size) log.warn("worker.stop_grace_exceeded", { stillRunning: inflight.size, waitedMs: Date.now() - t0 });
       await s.jobs.releaseOwned().catch(() => {});
     },
   };

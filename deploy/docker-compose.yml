@@ -24,6 +24,8 @@ services:
     depends_on:
       migrate: { condition: service_completed_successfully }
     restart: unless-stopped
+    # Running jobs get SHUTDOWN_GRACE_MS (default 25 s) to finish on SIGTERM; keep this longer.
+    stop_grace_period: 30s
   # Optional daily backup (§8.6): `docker compose --profile backup up -d`. Keeps 30 days in ./backups.
   # The master key is NOT in these backups — keep it separately.
   backup:

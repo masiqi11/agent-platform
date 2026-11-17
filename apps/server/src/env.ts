@@ -90,6 +90,8 @@ export const serverSchema = {
   WORKER_CONCURRENCY: z.coerce.number().int().default(4),
   EVENT_POLL_MS: z.coerce.number().int().default(1000),
   JOB_POLL_MS: z.coerce.number().int().default(1000),
+  /** How long a stopping worker lets running jobs finish (keep below the orchestrator's kill timeout). */
+  SHUTDOWN_GRACE_MS: z.coerce.number().int().min(0).default(25_000),
 };
 
 export type Env = z.infer<z.ZodObject<typeof serverSchema>>;
