@@ -95,6 +95,8 @@ try {
   mark("1–2 captain replies to the request", true, reply.body);
 
   // ── 3: details → proposal with acceptance criteria ──
+  // Answer the follow-up once it is asked (a person replies to the question card, not before it exists).
+  await until("captain follow-up question", async () => (await messages()).find((m) => m.kind === "question" && m.seq > m1.message.seq), 3).catch(() => null);
   await say("从昨天下午 3 点开始，下单接口 p99 超过 30 秒才失败，上游网关 5 秒就断开，影响所有下单用户");
   const prp = await until(
     "task proposal",
