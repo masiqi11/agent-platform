@@ -7,6 +7,7 @@ import type { Ctx } from "../../core/context";
 import { DomainError, forbidden, invalid, notFound } from "../../core/errors";
 import type { Consumer, Events } from "../../core/events";
 import { JobAborted, RetryLater, type createJobs } from "../../core/jobs";
+import { agentMaxTokens } from "../llm/service";
 import { log } from "../../core/logger";
 import type { Config } from "../../config";
 import type { Database } from "../../db";
@@ -455,7 +456,9 @@ export function createDevAgent(d: {
     if (a.engine !== "builtin" && d.harness) return harnessTurn({ sys, actx, a, t, ses, wsId: ws.id, st, checkpoint, kind: p.kind, prKey: await projectKey(t.projectId) });
     const modelName = a.modelPolicy.primary ?? (await d.llm.defaultModelName(p.tenantId));
     const mdl = await d.llm.findModel(p.tenantId, modelName);
-    const budgets = d.runtime.layerBudgets(mdl?.m.contextWindow ?? 8192, a.modelPolicy.maxTokens ?? 1024);
+    // Coding turns write whole files inside one tool call; 1024 output tokens is far too few (S8-7).
+    const policy = { ...a.modelPolicy, maxTokens: a.modelPolicy.maxTokens ?? agentMaxTokens(mdl?.m.contextWindow) };
+    const budgets = d.runtime.layerBudgets(mdl?.m.contextWindow ?? 8192, policy.maxTokens);
     const [pr] = await db.root.select({ key: project.key }).from(project).where(eq(project.id, t.projectId));
     const pkg: ContextPackage = {
       policy: {
@@ -532,7 +535,7 @@ export function createDevAgent(d: {
             scope: { projectId: t.projectId, taskId: t.id, sessionId: ses.id, agentId: a.id },
             messages: [baseRendered.messages[0]!, { role: "user", content: user }, ...convo],
             tools: d.runtime.toolSpecs(a),
-            modelPolicy: a.modelPolicy,
+            modelPolicy: policy,
             dataClasses: ["code", "task"],
           });
         } catch (e) {

@@ -445,4 +445,34 @@ describe("S4 model gateway", () => {
     expect(empty.toolCalls.length).toBe(1);
     expect(seen.at(-1).body.messages[1].reasoning_content).toBe("");
   });
+  test("S8-7: a reply cut off by max_tokens with nothing usable is retried once with a larger budget", async () => {
+    await provider("思考模型截断", "openai", [{ name: "ds-trunc", supportsTools: true, contextWindow: 65536 }]);
+    const budgets: number[] = [];
+    handler = (body) => {
+      budgets.push(body.max_tokens);
+      if (body.max_tokens <= 1024)
+        return Response.json({
+          choices: [{ message: { role: "assistant", content: "", reasoning_content: "想了很久……" }, finish_reason: "length" }],
+          usage: { prompt_tokens: 10, completion_tokens: 1024 },
+        });
+      return Response.json({
+        choices: [
+          {
+            message: { role: "assistant", content: "", tool_calls: [{ id: "c1", type: "function", function: { name: "write_file", arguments: '{"path":"a.ts","content":"x"}' } }] },
+            finish_reason: "tool_calls",
+          },
+        ],
+      });
+    };
+    const r = await t.s.llm.complete(ctx, {
+      purpose: "test.trunc",
+      promptVersion: "p",
+      scope: { projectId },
+      modelPolicy: { primary: "ds-trunc", maxTokens: 1024 },
+      messages: [{ role: "user", content: "修复" }],
+      tools: [{ name: "write_file", description: "w", parameters: { type: "object", properties: {} } }],
+    });
+    expect(budgets).toEqual([1024, 4096]);
+    expect(r.toolCalls[0]?.name).toBe("write_file");
+  });
 });

@@ -116,6 +116,8 @@ export interface CompleteInput {
   /** Data classes leaving the box (LLM-11), e.g. ["chat"], ["code"]. */
   dataClasses?: string[];
   onDelta?: (delta: string) => void;
+  /** Internal: this call already retried once after a max_tokens truncation. */
+  retriedTruncated?: boolean;
 }
 export interface CompleteResult {
   content: string;
@@ -162,11 +164,24 @@ export class LlmUnavailable extends DomainError {
 interface RawReply {
   content: string;
   toolCalls: ParsedToolCall[];
+  /** finish_reason "length": the reply hit max_tokens. */
+  truncated?: boolean;
   /** reasoning_content of thinking-mode providers; passed back with the tool history. */
   reasoning?: string;
   tokensIn?: number;
   tokensOut?: number;
 }
+
+/** Default output budget for tool-using agent turns (dev / reviewer / tester) when the agent sets none. */
+export const AGENT_MAX_TOKENS = 8192;
+/**
+ * Small-window models keep the old 1024 (their context is better spent on history); large-window
+ * models get up to AGENT_MAX_TOKENS, never more than a quarter of the window.
+ */
+export const agentMaxTokens = (contextWindow: number | null | undefined) => {
+  const cw = contextWindow ?? 8192;
+  return cw < 32_768 ? 1024 : Math.min(AGENT_MAX_TOKENS, Math.floor(cw / 4));
+};
 
 /** Vector column dimension (§8.7): other dimensions need a new index version, not supported in place. */
 export const EMBED_DIM = 768;
@@ -633,9 +648,11 @@ export function createLlm(d: { config: Config; db: Database; audit: Audit; event
       const partial = new Map<string, { name: string; args: string }>();
       const openAt = new Map<number, string>();
       let refused = false;
+      let truncated = false;
       const take = (j: Record<string, unknown>, delta: boolean) => {
         const ch = ((j.choices as unknown[]) ?? [])[0] as Record<string, unknown> | undefined;
         if (ch?.finish_reason === "content_filter") refused = true;
+        if (ch?.finish_reason === "length") truncated = true;
         const msg = (delta ? ch?.delta : ch?.message) as
           | { content?: string; reasoning_content?: string; tool_calls?: Array<{ index?: number; id?: string; function?: { name?: string; arguments?: string } }> }
           | undefined;
@@ -688,12 +705,19 @@ export function createLlm(d: { config: Config; db: Database; audit: Audit; event
         }
         if (pc.name) out.toolCalls.push({ name: pc.name, arguments: args });
       }
+      if (truncated) out.truncated = true;
       return out;
     });
     // Some gateways mislabel parallel tool-call fragments when streaming (all arguments under one
     // index, interleaved), which no client can reassemble. The same request without streaming is
     // correct there, so retry once that way; the streamed text was only a live preview.
     if (malformedStream) return callOpenAi(m, p, key, { ...req, onDelta: undefined });
+    // Cut off by max_tokens before producing anything usable (a thinking model can spend the whole
+    // budget on reasoning — seen live with deepseek-flash at 1024): retry once with a larger budget,
+    // instead of reading an empty reply as "the model is done".
+    const budget = req.modelPolicy?.maxTokens ?? 1024;
+    if (reply.truncated && !reply.content.trim() && !reply.toolCalls.length && !req.retriedTruncated && budget < 32_768)
+      return callOpenAi(m, p, key, { ...req, onDelta: undefined, retriedTruncated: true, modelPolicy: { ...req.modelPolicy, maxTokens: Math.min(budget * 4, 32_768) } });
     return reply;
   }
 

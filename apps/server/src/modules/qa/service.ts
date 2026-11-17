@@ -6,6 +6,7 @@ import { DomainError, invalid } from "../../core/errors";
 import type { Consumer, Events } from "../../core/events";
 import { newId } from "../../core/ids";
 import { JobAborted, RetryLater, type createJobs } from "../../core/jobs";
+import { agentMaxTokens } from "../llm/service";
 import { log, redactValue } from "../../core/logger";
 import type { ObjectStore } from "../../core/object-store";
 import type { Database } from "../../db";
@@ -394,7 +395,7 @@ export function createQa(d: {
                   : []),
               ],
               tools: lastStep ? tools.filter((x) => x.name === conclude) : tools,
-              modelPolicy: a.modelPolicy,
+              modelPolicy: { ...a.modelPolicy, maxTokens: a.modelPolicy.maxTokens ?? agentMaxTokens(undefined) },
               dataClasses: ["code", "task"],
             });
           } catch (e) {
