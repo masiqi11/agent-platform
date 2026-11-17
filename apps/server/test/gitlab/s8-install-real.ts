@@ -6,9 +6,12 @@
  * answer the follow-up, accept the proposal, approve the merge) and waits for the agents.
  *
  *   BASE=http://127.0.0.1:3000 ADMIN_TOKEN=… LLM_BASE_URL=… LLM_API_KEY=… LLM_MODEL=… \
- *   GITLAB_URL=http://gitlab/pay/payments-s8 GITLAB_TOKEN=… bun test/gitlab/s8-install-real.ts
+ *   GITLAB_URL=https://gitlab.example/pay/payments-s8 GITLAB_TOKEN=… [GITLAB_CA_FILE=ca.pem] bun test/gitlab/s8-install-real.ts
+ *
+ * Production only accepts https GitLab; a self-signed GitLab passes its CA (PEM) in GITLAB_CA_FILE,
+ * which goes into the bind form's「CA 证书」field (docs/deploy.md §8).
  */
-import { writeFileSync } from "node:fs";
+import { readFileSync, writeFileSync } from "node:fs";
 import { resolve } from "node:path";
 
 const env = (k: string) => {
@@ -74,6 +77,7 @@ try {
     name: "payments",
     url: env("GITLAB_URL"),
     token: env("GITLAB_TOKEN"),
+    ...(process.env.GITLAB_CA_FILE ? { caCert: readFileSync(process.env.GITLAB_CA_FILE, "utf8") } : {}),
   });
   mark("GitLab repo bound (access check)", bound.check.ok, JSON.stringify(bound.check.warnings ?? []));
 
