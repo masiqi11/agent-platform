@@ -16,7 +16,18 @@ export interface EnqueueOptions {
 }
 
 export type JobRow = typeof job.$inferSelect;
-export type JobHandler = (payload: Record<string, unknown>, ctx: { job: JobRow; heartbeat: () => Promise<void> }) => Promise<void>;
+export type JobHandler = (
+  payload: Record<string, unknown>,
+  ctx: {
+    job: JobRow;
+    heartbeat: () => Promise<void>;
+    /** Aborted when the job times out or this worker lost its lease (#8): stop before the next side effect. */
+    signal: AbortSignal;
+  },
+) => Promise<void>;
+
+/** Thrown by a handler that noticed `signal` was aborted. */
+export class JobAborted extends Error {}
 
 export class RetryLater extends Error {
   constructor(
@@ -64,7 +75,7 @@ export function createJobs(db: Database, opts: { owner: string; leaseMs?: number
         pick as (
           select id from (select id, run_at, row_number() over (partition by coalesce(concurrency_key, id) order by run_at) rn from cand) x
           where rn = 1 order by run_at limit ${limit})
-        update job set status = 'running', lease_owner = ${opts.owner}, lease_until = ${until}::timestamptz,
+        update job set status = 'running', lease_owner = ${opts.owner}, lease_token = gen_random_uuid()::text, lease_until = ${until}::timestamptz,
           heartbeat_at = now(), attempts = attempts + 1, updated_at = now()
         where id in (select id from pick)
         returning *`);
@@ -85,6 +96,7 @@ export function createJobs(db: Database, opts: { owner: string; leaseMs?: number
       dedupeKey: (r.dedupe_key as string) ?? null,
       concurrencyKey: (r.concurrency_key as string) ?? null,
       leaseOwner: (r.lease_owner as string) ?? null,
+      leaseToken: (r.lease_token as string) ?? null,
       leaseUntil: r.lease_until ? new Date(r.lease_until as string) : null,
       heartbeatAt: r.heartbeat_at ? new Date(r.heartbeat_at as string) : null,
       lastError: (r.last_error as string) ?? null,
@@ -95,24 +107,58 @@ export function createJobs(db: Database, opts: { owner: string; leaseMs?: number
     };
   }
 
+  /**
+   * Runs one claimed job. Its lease is renewed automatically while the handler runs; every write
+   * back is fenced by the claim's token (#8), so a worker that lost the job (lease expired and
+   * another worker took it, or it timed out) can no longer change its state. The handler's
+   * `signal` aborts at that moment and on timeout, so it can stop before its next side effect.
+   */
   async function runJob(j: JobRow) {
     const h = handlers.get(j.type);
+    const ac = new AbortController();
+    const mine = () => and(eq(job.id, j.id), eq(job.status, "running"), j.leaseToken ? eq(job.leaseToken, j.leaseToken) : eq(job.leaseOwner, opts.owner));
     const heartbeat = async () => {
-      await db.root
+      if (ac.signal.aborted) return;
+      const rows = await db.root
         .update(job)
         .set({ heartbeatAt: new Date(), leaseUntil: new Date(Date.now() + leaseMs) })
-        .where(and(eq(job.id, j.id), eq(job.leaseOwner, opts.owner)));
+        .where(mine())
+        .returning({ id: job.id });
+      if (!rows.length) {
+        log.warn("job.lease_lost", { jobId: j.id, type: j.type, owner: opts.owner });
+        ac.abort(new JobAborted("lease lost"));
+      }
     };
+    const renew = setInterval(() => void heartbeat().catch(() => undefined), Math.max(20, Math.floor(leaseMs / 3)));
+    /** Fenced write: false when this worker no longer holds the job. */
+    const settle = async (set: Partial<typeof job.$inferInsert>) =>
+      (
+        await db.root
+          .update(job)
+          .set({ ...set, leaseOwner: null, leaseUntil: null, leaseToken: null, updatedAt: new Date() })
+          .where(mine())
+          .returning({ id: job.id })
+      ).length > 0;
     try {
       if (!h) throw new Error(`no handler for job type ${j.type}`);
       let timer: ReturnType<typeof setTimeout> | undefined;
       await Promise.race([
-        h.fn(j.payload, { job: j, heartbeat }),
+        h.fn(j.payload, { job: j, heartbeat, signal: ac.signal }),
         new Promise((_, rej) => {
-          timer = setTimeout(() => rej(new Error(`job timeout after ${h.timeoutMs}ms`)), h.timeoutMs);
+          timer = setTimeout(() => {
+            const e = new Error(`job timeout after ${h.timeoutMs}ms`);
+            ac.abort(e);
+            rej(e);
+          }, h.timeoutMs);
         }),
+        // Lost the lease: stop waiting for the handler; whatever it still does can't settle the job.
+        new Promise((_, rej) => ac.signal.addEventListener("abort", () => rej(ac.signal.reason as Error), { once: true })),
       ]).finally(() => clearTimeout(timer));
-      await db.root.update(job).set({ status: "succeeded", leaseOwner: null, leaseUntil: null, updatedAt: new Date() }).where(eq(job.id, j.id));
+      clearInterval(renew);
+      if (!(await settle({ status: "succeeded" }))) {
+        log.warn("job.settle_fenced", { jobId: j.id, type: j.type, outcome: "succeeded" });
+        return;
+      }
       if (j.cron?.startsWith("every:")) {
         const every = Number(j.cron.slice(6));
         await enqueue(j.type, j.payload, {
@@ -124,38 +170,24 @@ export function createJobs(db: Database, opts: { owner: string; leaseMs?: number
         });
       }
     } catch (e) {
+      clearInterval(renew);
       const err = e as Error;
+      if (err instanceof JobAborted) {
+        // Lease lost: the job belongs to someone else now (or is back in the queue). Nothing to write.
+        log.warn("job.abandoned", { jobId: j.id, type: j.type, reason: err.message });
+        return;
+      }
+      if (!ac.signal.aborted) ac.abort(err);
       if (err instanceof RetryLater) {
         // Not a failure: reschedule without consuming an attempt.
-        await db.root
-          .update(job)
-          .set({
-            status: "queued",
-            attempts: Math.max(0, j.attempts - 1),
-            runAt: new Date(Date.now() + err.delayMs),
-            leaseOwner: null,
-            leaseUntil: null,
-            lastError: err.message,
-            updatedAt: new Date(),
-          })
-          .where(eq(job.id, j.id));
+        await settle({ status: "queued", attempts: Math.max(0, j.attempts - 1), runAt: new Date(Date.now() + err.delayMs), lastError: err.message });
         return;
       }
       const dead = j.attempts >= j.maxAttempts;
       log.warn("job.failed", { jobId: j.id, type: j.type, attempt: j.attempts, dead, err: err.message });
       const backoff = Math.min(1000 * 2 ** j.attempts, 5 * 60_000) * (0.75 + Math.random() * 0.5);
-      await db.root
-        .update(job)
-        .set({
-          status: dead ? "dead" : "queued",
-          runAt: new Date(Date.now() + backoff),
-          leaseOwner: null,
-          leaseUntil: null,
-          lastError: (err.stack ?? err.message).slice(0, 2000),
-          updatedAt: new Date(),
-        })
-        .where(eq(job.id, j.id));
-      if (dead)
+      const wrote = await settle({ status: dead ? "dead" : "queued", runAt: new Date(Date.now() + backoff), lastError: (err.stack ?? err.message).slice(0, 2000) });
+      if (wrote && dead)
         await db.root.insert(deadLetter).values({
           id: newId("dlq"),
           tenantId: j.tenantId,
@@ -172,7 +204,7 @@ export function createJobs(db: Database, opts: { owner: string; leaseMs?: number
   async function recoverExpired(): Promise<number> {
     const rows = await db.root
       .update(job)
-      .set({ status: "queued", leaseOwner: null, leaseUntil: null, updatedAt: new Date() })
+      .set({ status: "queued", leaseOwner: null, leaseUntil: null, leaseToken: null, updatedAt: new Date() })
       .where(and(eq(job.status, "running"), lt(job.leaseUntil, new Date())))
       .returning({ id: job.id });
     return rows.length;
@@ -200,7 +232,7 @@ export function createJobs(db: Database, opts: { owner: string; leaseMs?: number
     async releaseOwned() {
       await db.root
         .update(job)
-        .set({ status: "queued", leaseOwner: null, leaseUntil: null })
+        .set({ status: "queued", leaseOwner: null, leaseUntil: null, leaseToken: null })
         .where(and(eq(job.status, "running"), eq(job.leaseOwner, opts.owner)));
     },
     async counts() {

@@ -36,8 +36,8 @@ export async function registerHandlers(s: Services): Promise<void> {
   });
   s.jobs.register(
     "qa.turn",
-    async (p, { job }) => {
-      await s.qa.turn(p as Parameters<typeof s.qa.turn>[0], job.traceId ?? job.id);
+    async (p, { job, signal }) => {
+      await s.qa.turn(p as Parameters<typeof s.qa.turn>[0], job.traceId ?? job.id, signal);
     },
     30 * 60_000,
   );
@@ -53,8 +53,8 @@ export async function registerHandlers(s: Services): Promise<void> {
   });
   s.jobs.register(
     "dev.turn",
-    async (p, { job }) => {
-      await s.devAgent.turn(p as Parameters<typeof s.devAgent.turn>[0], job.traceId ?? job.id);
+    async (p, { job, signal }) => {
+      await s.devAgent.turn(p as Parameters<typeof s.devAgent.turn>[0], job.traceId ?? job.id, signal);
     },
     30 * 60_000,
   );

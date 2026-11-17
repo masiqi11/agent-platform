@@ -1040,6 +1040,8 @@ export const job = pgTable(
     dedupeKey: text(),
     concurrencyKey: text(),
     leaseOwner: text(),
+    /** Fencing token of the current claim (#8): only the holder of this token may change the row. */
+    leaseToken: text(),
     leaseUntil: ts(),
     heartbeatAt: ts(),
     lastError: text(),

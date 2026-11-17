@@ -6,7 +6,7 @@ import type { Audit } from "../../core/audit";
 import type { Ctx } from "../../core/context";
 import { DomainError, forbidden, invalid, notFound } from "../../core/errors";
 import type { Consumer, Events } from "../../core/events";
-import { RetryLater, type createJobs } from "../../core/jobs";
+import { JobAborted, RetryLater, type createJobs } from "../../core/jobs";
 import { log } from "../../core/logger";
 import type { Config } from "../../config";
 import type { Database } from "../../db";
@@ -397,7 +397,7 @@ export function createDevAgent(d: {
     return s && s.status === "running";
   }
 
-  async function turn(p: { tenantId: string; taskId: string; agentId: string; kind: DevWakeKind }, traceId: string) {
+  async function turn(p: { tenantId: string; taskId: string; agentId: string; kind: DevWakeKind }, traceId: string, signal?: AbortSignal) {
     const sys = await d.identity.systemCtx(p.tenantId, traceId);
     if (await d.runtime.paused(p.tenantId)) return { skipped: "paused" };
     const a = await loadAgent(p.agentId);
@@ -503,6 +503,8 @@ export function createDevAgent(d: {
     let usedModel = modelName;
     try {
       while (true) {
+        // #8: the job timed out or another worker owns it now — no further side effects from here.
+        if (signal?.aborted) throw new JobAborted(`dev.turn aborted: ${String((signal.reason as Error | undefined)?.message ?? "")}`);
         if (steps >= maxSteps) {
           stopReason = "max_steps";
           break;
@@ -557,6 +559,7 @@ export function createDevAgent(d: {
         convo.push({ role: "assistant", content: res.content, toolCalls: ided, ...(res.reasoning !== undefined ? { reasoning: res.reasoning } : {}) });
         const answered = new Set<string>();
         for (const [ci, call] of calls.entries()) {
+          if (signal?.aborted) throw new JobAborted("dev.turn aborted before a tool call");
           // AGT-补1 loop guard: the same call with the same args N times in a row aborts the turn.
           const sig = `${call.name}:${JSON.stringify(call.arguments)}`;
           recent.push(sig);
