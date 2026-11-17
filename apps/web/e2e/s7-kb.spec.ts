@@ -78,5 +78,13 @@ test("S7: knowledge page, explainable search, citations, global captain across p
   await page.waitForTimeout(300);
   await shootBoth(page, "s7-citation");
   void bill;
+
+  // §8.7: the embedding model is chosen on 模型与预算 (the demo uses the deterministic stand-in).
+  await page.keyboard.press("Escape");
+  await page.goto("/admin/models");
+  const emb = page.getByTestId("embedding-card");
+  await expect(emb).toContainText("知识库嵌入");
+  await expect(emb.getByLabel("嵌入模型")).toContainText("scripted:embed");
+  await expect(page.getByTestId("provider-card").filter({ hasText: "scripted:embed" })).toContainText("嵌入 · 768 维");
   con.assertClean();
 });

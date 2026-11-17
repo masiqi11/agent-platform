@@ -309,7 +309,16 @@ export function createKnowledge(d: {
     if (!pr) return null;
     const sys = await d.identity.systemCtx(pr.tenantId);
     const active = await activeIndex(projectId, null);
-    const ix = active ?? (await newIndex(pr.tenantId, projectId, null, await d.llm.embeddingModelName(pr.tenantId)));
+    const model = await d.llm.embeddingModelName(pr.tenantId);
+    let ix = active ?? (await newIndex(pr.tenantId, projectId, null, model));
+    // The warm layer is rebuilt in place every time; keep its model label in step with the vectors it gets.
+    if ((ix.embeddingModel ?? null) !== model) {
+      await db.root
+        .update(projectIndex)
+        .set({ embeddingModel: model, embeddingDim: model ? 768 : null, updatedAt: new Date() })
+        .where(eq(projectIndex.id, ix.id));
+      ix = { ...ix, embeddingModel: model, embeddingDim: model ? 768 : null };
+    }
     await db.root.delete(documentChunk).where(eq(documentChunk.indexId, ix.id));
     const decs = await db.root
       .select()
@@ -389,7 +398,7 @@ export function createKnowledge(d: {
   async function vectorRoute(ctx: Ctx, projectIds: string[], query: string): Promise<{ list: Array<{ id: string; projectId: string; score: number }>; note?: string }> {
     const model = await d.llm.embeddingModelName(ctx.tenantId);
     if (!model) return { list: [], note: "未配置嵌入模型，向量路关闭" };
-    const e = await d.llm.embed(ctx, [query], {});
+    const e = await d.llm.embed(ctx, [query], {}, "query");
     if (!e) return { list: [], note: "嵌入不可用（维度不符、出域限制或调用失败），本次跳过向量路" };
     const vec = `[${e.vectors[0]!.join(",")}]`;
     // HNSW applies the ACL / active-version / tombstone filters after collecting ef_search candidates
@@ -793,6 +802,21 @@ export function createKnowledge(d: {
     return { ok: true as const, queued: repos.length + 1 };
   }
 
+  /** After the embedding model changes (§8.7): full rebuild of every repo index, warm layers re-embedded. */
+  async function rebuildTenant(tenantId: string) {
+    const ps = await db.root.select({ id: project.id }).from(project).where(eq(project.tenantId, tenantId));
+    let queued = 0;
+    for (const p of ps) {
+      for (const r of await d.repos.projectRepos(p.id)) {
+        await enqueueIndex(tenantId, p.id, r.id, true);
+        queued++;
+      }
+      await enqueueWarm(tenantId, p.id);
+      queued++;
+    }
+    return queued;
+  }
+
   /* ───────────── triggers ───────────── */
 
   async function enqueueIndex(tenantId: string, projectId: string, repoId: string, full = false) {
@@ -871,7 +895,7 @@ export function createKnowledge(d: {
     },
   });
 
-  return { indexRepo, indexWarm, search, askProjectCaptain, federated, status, file, catalog, evaluate, reindex, consumer, weekly, enqueueIndex, enqueueWarm };
+  return { rebuildTenant, indexRepo, indexWarm, search, askProjectCaptain, federated, status, file, catalog, evaluate, reindex, consumer, weekly, enqueueIndex, enqueueWarm };
 }
 export type Knowledge = ReturnType<typeof createKnowledge>;
 

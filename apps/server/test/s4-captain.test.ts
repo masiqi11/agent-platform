@@ -2,6 +2,7 @@ import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { and, desc, eq } from "drizzle-orm";
 import type { Ctx } from "../src/core/context";
 import { agent, auditLog, budget, decision, event, inboxItem, job, llmCall, message, proposal, question, session, sessionTurn, summary, task, tenant } from "../src/db/schema";
+import { sanitizeSummary, validateSummary } from "../src/modules/captain/service";
 import { createTestApp, type TestApp } from "./helpers";
 
 process.env.LLM_BACKOFF_MS = "2";
@@ -163,6 +164,38 @@ describe("S4 captain — scripted model (exit criteria)", () => {
     await cycle();
   });
 
+  test("a model that searches first gets the results back within the same turn and then proposes (no fallback)", async () => {
+    await setModel("scripted:search_first");
+    const m = await say(`@[${cap.principalId}] 请帮我给导出功能加一个 CSV 格式`);
+    await cycle();
+    const calls = await t.s.db.root
+      .select()
+      .from(llmCall)
+      .where(and(eq(llmCall.purpose, "captain.turn"), eq(llmCall.model, "scripted:search_first")));
+    expect(calls).toHaveLength(2); // search round + answer round
+    const tools = await t.s.db.root.select().from(sessionTurn).where(eq(sessionTurn.sessionId, calls[0]!.sessionId!));
+    // The captain session spans turns; this turn's tool calls are the last two.
+    const names = tools
+      .filter((x) => x.role === "tool")
+      .sort((a, b) => a.idx - b.idx)
+      .slice(-2)
+      .map((x) => (x.toolCalls as Array<{ name: string }>)[0]!.name);
+    expect(names).toEqual(["search_knowledge", "propose_task"]); // read tool ran once, inside the turn
+    const res = JSON.parse(
+      tools
+        .filter((x) => x.role === "tool")
+        .sort((a, b) => a.idx - b.idx)
+        .at(-1)!.content,
+    ) as { ok: boolean; result: { proposalId: string } };
+    expect(res.ok).toBe(true);
+    const [prp] = await t.s.db.root.select().from(proposal).where(eq(proposal.id, res.result.proposalId));
+    expect(prp!.payload.fallback).toBeUndefined(); // the model's proposal, not the deterministic fallback
+    expect(prp!.payload.title).toBe("导出功能支持 CSV");
+    const replies = (await after(m.seq)).filter((x) => x.authorPrincipalId === cap.principalId && x.kind === "text");
+    expect(replies).toHaveLength(1); // one reply, not one per round
+    await t.req("POST", `/api/v1/proposals/${prp!.id}/reject`, { token: owner, body: { reason: "测试" } });
+  });
+
   test("INV-18 / INV-07: injected instructions can't make the captain call tools outside its allowlist; fake citations are dropped", async () => {
     await setModel("scripted:rogue");
     const before = await t.s.db.root.select().from(task);
@@ -285,6 +318,13 @@ describe("S4 summaries & decisions", () => {
     expect(c.status).toBe(200);
     expect(c.body.version).toBe(2);
     expect(c.body.corrected).toBe(true);
+  });
+
+  test("summary items written as plain strings are tolerated (dropped as uncited) instead of failing the whole summary", () => {
+    expect(validateSummary({ decisions: [{ text: "统一走异步队列", seqs: [1] }], constraints: ["不得改动对账表结构"], openQuestions: [], taskGraph: [], risks: [] })).toBeNull();
+    const s = sanitizeSummary({ decisions: [{ text: "统一走异步队列", seqs: [1] }], constraints: ["不得改动对账表结构"] } as never, new Set([1]));
+    expect(s.decisions).toEqual([{ text: "统一走异步队列", seqs: [1] }]);
+    expect(s.constraints).toEqual([]);
   });
 
   test("TRAP-15: summary items citing non-existent messages are dropped", async () => {

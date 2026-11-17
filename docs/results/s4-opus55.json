@@ -1,0 +1,77 @@
+{
+  "ranAt": "2026-11-17T01:29:35.152Z",
+  "host": "模型中转站 sub.foxnio.com（OpenAI 兼容）",
+  "steps": [
+    {
+      "step": "1 @船长 支付服务最近超时，帮我查一下 → 回复 + 追问",
+      "ms": 21912,
+      "pass": true,
+      "by": "model",
+      "detail": "回复=\"收到，先确认几个细节：\"；追问卡=\"收到，我先确认几个关键点再立项：① 超时从什么时间开始、持续多久？② 是所有支付接口还是个别接口（如下单/退款）？③ 有\""
+    },
+    {
+      "step": "2 补充细节 → 提议卡",
+      "ms": 41072,
+      "pass": true,
+      "by": "model",
+      "detail": "标题=\"修复 /pay/callback 回调超时（p99>5s、错误率 8%，影响微信支付回调）\"；验收标准 4 条；优先级 P1"
+    },
+    {
+      "step": "3 确认提议 → 建任务并按策略分配",
+      "ms": 61,
+      "pass": true,
+      "by": "n/a",
+      "detail": "任务 P1 状态=backlog 负责=已发分配提议"
+    },
+    {
+      "step": "4 滚动摘要（/summary）",
+      "ms": 8720,
+      "pass": true,
+      "by": "model",
+      "detail": "v1 条目 8；决策 2；模型=claude-opus-5-5"
+    },
+    {
+      "step": "5 问全局船长（相关）",
+      "ms": 5453,
+      "pass": true,
+      "by": "model",
+      "detail": "\"支付回调超时已列为 PAY-1，按 P1 优先级处理。计划将支付回调统一接入异步队列，并在 3 秒内先返回 200；同时定位并修复超时根因，修复后验证不存在重复\" 来源=PAY"
+    },
+    {
+      "step": "6 问全局船长（无依据）→ 未检索到依据",
+      "ms": 12,
+      "pass": true,
+      "by": "n/a",
+      "detail": "未检索到依据"
+    }
+  ],
+  "stat": {
+    "model": "claude-opus-5-5",
+    "endpoint": "sub.foxnio.com",
+    "calls": 5,
+    "ok": 5,
+    "errors": 0,
+    "avgLatencyMs": 15256,
+    "tokensPerSec": 10.5,
+    "toolModes": {
+      "native": 3,
+      "none": 2
+    },
+    "repaired": 0,
+    "rejectedTools": [],
+    "failures": [],
+    "byPurpose": {
+      "captain.turn": [
+        21589,
+        15862,
+        24951
+      ],
+      "captain.summary": [
+        8443
+      ],
+      "global.ask": [
+        5435
+      ]
+    }
+  }
+}

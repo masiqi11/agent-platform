@@ -16,9 +16,66 @@ import { SCRIPTS, type ScriptReply } from "./scripts";
 type ProviderRow = typeof modelProvider.$inferSelect;
 type ModelRow = typeof model.$inferSelect;
 
-export interface ChatMsg {
-  role: "system" | "user" | "assistant";
-  content: string;
+/**
+ * A conversation message. Agent loops send their earlier steps as native tool messages: an
+ * assistant message with `toolCalls`, then one `tool` message per call (its raw JSON result).
+ * Replaying them as text taught strong models to write tool calls as text instead of calling them.
+ */
+export type ChatMsg =
+  | { role: "system" | "user"; content: string }
+  | { role: "assistant"; content: string; toolCalls?: Array<{ id: string; name: string; arguments: Record<string, unknown> }> }
+  | { role: "tool"; content: string; toolCallId: string; name: string };
+
+const wrapUntrusted = (body: string) => `<untrusted source="tool">\n${body.replace(/<\/?untrusted/gi, "‹untrusted")}\n</untrusted>`;
+
+/** Text rendering of tool history, for scripted models and models without native tool support. */
+export function textHistory(messages: ChatMsg[]): Array<{ role: "system" | "user" | "assistant"; content: string }> {
+  const out: Array<{ role: "system" | "user" | "assistant"; content: string }> = [];
+  let results: string[] = []; // the current step's results share one untrusted block
+  const flush = () => {
+    if (results.length) out.push({ role: "user", content: wrapUntrusted(results.join("\n")) });
+    results = [];
+  };
+  for (const m of messages) {
+    if (m.role === "tool") {
+      results.push(`<tool_result name="${m.name}">${m.content}</tool_result>`);
+      continue;
+    }
+    flush();
+    if (m.role === "assistant" && m.toolCalls?.length)
+      out.push({ role: "assistant", content: `${m.content}\n<tool_calls>${JSON.stringify(m.toolCalls.map((c) => ({ name: c.name, arguments: c.arguments })))}</tool_calls>` });
+    else out.push({ role: m.role, content: m.content });
+  }
+  flush();
+  return out;
+}
+
+/** Drops the oldest step of an agent transcript: one message and the tool results that answer it. */
+export function dropOldestStep(convo: ChatMsg[]) {
+  convo.shift();
+  while (convo[0]?.role === "tool") convo.shift();
+}
+
+/** OpenAI-compatible wire format. */
+function openAiMessages(messages: ChatMsg[]) {
+  return messages.map((m) =>
+    m.role === "tool"
+      ? { role: "tool", tool_call_id: m.toolCallId, content: wrapUntrusted(m.content) }
+      : m.role === "assistant" && m.toolCalls?.length
+        ? { role: "assistant", content: m.content || null, tool_calls: m.toolCalls.map((c) => ({ id: c.id, type: "function", function: { name: c.name, arguments: JSON.stringify(c.arguments) } })) }
+        : { role: m.role, content: m.content },
+  );
+}
+
+/** Ollama /api/chat wire format. */
+function ollamaMessages(messages: ChatMsg[]) {
+  return messages.map((m) =>
+    m.role === "tool"
+      ? { role: "tool", tool_name: m.name, content: wrapUntrusted(m.content) }
+      : m.role === "assistant" && m.toolCalls?.length
+        ? { role: "assistant", content: m.content, tool_calls: m.toolCalls.map((c) => ({ function: { name: c.name, arguments: c.arguments } })) }
+        : { role: m.role, content: m.content },
+  );
 }
 export interface ToolSpec {
   name: string;
@@ -95,6 +152,19 @@ interface RawReply {
 /** Vector column dimension (§8.7): other dimensions need a new index version, not supported in place. */
 export const EMBED_DIM = 768;
 export const SCRIPTED_EMBED_MODEL = "scripted:embed";
+
+/**
+ * Asymmetric retrieval models need a task prefix on each input; without it their recall drops
+ * noticeably. Known families only — anything else is embedded as-is.
+ */
+export function embedPrefix(modelName: string, kind: "query" | "document"): string {
+  const n = modelName.toLowerCase();
+  if (n.includes("nomic-embed")) return kind === "query" ? "search_query: " : "search_document: ";
+  if (n.includes("embeddinggemma")) return kind === "query" ? "task: search result | query: " : "title: none | text: ";
+  if (n.includes("mxbai-embed")) return kind === "query" ? "Represent this sentence for searching relevant passages: " : "";
+  if (/\be5\b|multilingual-e5/.test(n)) return kind === "query" ? "query: " : "passage: ";
+  return "";
+}
 
 /** Deterministic "embedding" for CI: hashed bag of tokens (incl. CJK bigrams), L2-normalised. */
 export function hashEmbed(text: string): number[] {
@@ -403,7 +473,7 @@ export function createLlm(d: { config: Config; db: Database; audit: Audit; event
     const stream = Boolean(req.onDelta) && m.supportsStreaming;
     const body: Record<string, unknown> = {
       model: m.name,
-      messages: req.messages,
+      messages: req.tools?.length && m.supportsTools ? ollamaMessages(req.messages) : textHistory(req.messages),
       stream,
       options: { temperature: req.modelPolicy?.temperature ?? 0.2, num_predict: req.modelPolicy?.maxTokens ?? 1024, num_ctx: m.contextWindow },
     };
@@ -444,11 +514,18 @@ export function createLlm(d: { config: Config; db: Database; audit: Audit; event
 
   async function callOpenAi(m: ModelRow, p: ProviderRow, key: string | undefined, req: CompleteInput): Promise<RawReply> {
     const stream = Boolean(req.onDelta) && m.supportsStreaming;
-    const body: Record<string, unknown> = { model: m.name, messages: req.messages, temperature: req.modelPolicy?.temperature ?? 0.2, max_tokens: req.modelPolicy?.maxTokens ?? 1024, stream };
+    const body: Record<string, unknown> = {
+      model: m.name,
+      messages: req.tools?.length && m.supportsTools ? openAiMessages(req.messages) : textHistory(req.messages),
+      temperature: req.modelPolicy?.temperature ?? 0.2,
+      max_tokens: req.modelPolicy?.maxTokens ?? 1024,
+      stream,
+    };
     if (req.tools?.length && m.supportsTools) body.tools = toolDefs(req.tools);
     if (req.json && m.supportsJson && !req.tools?.length) body.response_format = { type: "json_object" };
     if (stream) body.stream_options = { include_usage: true };
-    return withTimeout(async (signal, mark) => {
+    let malformedStream = false;
+    const reply = await withTimeout(async (signal, mark) => {
       const res = await doFetch(`${p.baseUrl.replace(/\/$/, "")}/chat/completions`, {
         method: "POST",
         signal,
@@ -457,21 +534,28 @@ export function createLlm(d: { config: Config; db: Database; audit: Audit; event
       });
       if (!res.ok) throw httpError(res.status, await res.text());
       const out: RawReply = { content: "", toolCalls: [] };
-      const partial: Record<number, { name: string; args: string }> = {};
+      // Keyed by tool-call id when the stream gives one: some gateways (seen on a Claude relay) send
+      // every parallel call with index 0, so the index alone would glue their arguments together.
+      const partial = new Map<string, { name: string; args: string }>();
+      const openAt = new Map<number, string>();
       let refused = false;
       const take = (j: Record<string, unknown>, delta: boolean) => {
         const ch = ((j.choices as unknown[]) ?? [])[0] as Record<string, unknown> | undefined;
         if (ch?.finish_reason === "content_filter") refused = true;
-        const msg = (delta ? ch?.delta : ch?.message) as { content?: string; tool_calls?: Array<{ index?: number; function?: { name?: string; arguments?: string } }> } | undefined;
+        const msg = (delta ? ch?.delta : ch?.message) as { content?: string; tool_calls?: Array<{ index?: number; id?: string; function?: { name?: string; arguments?: string } }> } | undefined;
         if (msg?.content) {
           out.content += msg.content;
           if (delta) req.onDelta?.(msg.content);
         }
         for (const [i, tc] of (msg?.tool_calls ?? []).entries()) {
-          const k = tc.index ?? i;
-          partial[k] ??= { name: "", args: "" };
-          if (tc.function?.name) partial[k].name += tc.function.name;
-          if (tc.function?.arguments) partial[k].args += tc.function.arguments;
+          const idx = tc.index ?? i;
+          // A fragment with an id opens (or continues) that call; id-less fragments continue the call last opened at this index.
+          const key = tc.id ?? openAt.get(idx) ?? `#${idx}`;
+          openAt.set(idx, key);
+          let cur = partial.get(key);
+          if (!cur) partial.set(key, (cur = { name: "", args: "" }));
+          if (tc.function?.name) cur.name += tc.function.name;
+          if (tc.function?.arguments) cur.args += tc.function.arguments;
         }
         const u = j.usage as { prompt_tokens?: number; completion_tokens?: number } | undefined;
         if (u) {
@@ -483,7 +567,9 @@ export function createLlm(d: { config: Config; db: Database; audit: Audit; event
         await readLines(
           res,
           (l) => {
-            const data = l.replace(/^data:\s*/, "");
+            // SSE: only `data:` lines carry chunks; `: ping` comments, `event:`, `id:`, `retry:` are skipped.
+            if (!l.startsWith("data:")) return;
+            const data = l.slice(5).trim();
             if (data && data !== "[DONE]") take(JSON.parse(data) as Record<string, unknown>, true);
           },
           mark,
@@ -493,24 +579,31 @@ export function createLlm(d: { config: Config; db: Database; audit: Audit; event
         take((await res.json()) as Record<string, unknown>, false);
       }
       if (refused) throw new ProviderError("模型拒答（content_filter）", false, "refused");
-      for (const pc of Object.values(partial)) {
+      for (const pc of partial.values()) {
         let args: Record<string, unknown> = {};
         try {
           args = JSON.parse(pc.args || "{}") as Record<string, unknown>;
         } catch {
-          /* malformed args → dropped by validation */
+          // Malformed args → empty; tool validation rejects the call and the caller's fallback applies.
+          log.warn("llm.tool_args_malformed", { model: m.name, tool: pc.name, length: pc.args.length, stream });
+          if (stream) malformedStream = true;
         }
         if (pc.name) out.toolCalls.push({ name: pc.name, arguments: args });
       }
       return out;
     });
+    // Some gateways mislabel parallel tool-call fragments when streaming (all arguments under one
+    // index, interleaved), which no client can reassemble. The same request without streaming is
+    // correct there, so retry once that way; the streamed text was only a live preview.
+    if (malformedStream) return callOpenAi(m, p, key, { ...req, onDelta: undefined });
+    return reply;
   }
 
   async function callScripted(m: ModelRow, req: CompleteInput): Promise<RawReply> {
     const name = m.name.replace(/^scripted:/, "");
     const script = SCRIPTS[name];
     if (!script) throw new ProviderError(`未知脚本 ${name}`, false, "client");
-    const r: ScriptReply = script({ purpose: req.purpose, messages: req.messages, toolNames: (req.tools ?? []).map((t) => t.name), json: Boolean(req.json) });
+    const r: ScriptReply = script({ purpose: req.purpose, messages: textHistory(req.messages), toolNames: (req.tools ?? []).map((t) => t.name), json: Boolean(req.json) });
     if (r.fail === "timeout") throw new ProviderError("脚本模拟超时", true, "timeout");
     if (r.fail === "server_error") throw new ProviderError("脚本模拟 500", true, "server");
     if (r.fail === "refused") throw new ProviderError("脚本模拟拒答", false, "refused");
@@ -681,6 +774,7 @@ export function createLlm(d: { config: Config; db: Database; audit: Audit; event
     const def = await defaultModelName(ctx.tenantId);
     return {
       defaultModel: def,
+      embeddingModel: await embeddingModelName(ctx.tenantId),
       providers: ps.map((p) => ({
         id: p.id,
         name: p.name,
@@ -703,6 +797,7 @@ export function createLlm(d: { config: Config; db: Database; audit: Audit; event
             tier: m.tier,
             inputPrice: m.inputPrice,
             outputPrice: m.outputPrice,
+            embeddingDim: m.embeddingDim,
             notes: m.notes,
           })),
       })),
@@ -717,10 +812,22 @@ export function createLlm(d: { config: Config; db: Database; audit: Audit; event
       dialect: "openai" | "ollama";
       isExternal: boolean;
       apiKey?: string;
-      models: Array<{ name: string; contextWindow?: number; supportsTools?: boolean; supportsJson?: boolean; thinkOff?: boolean; tier?: "small" | "large"; inputPrice?: number; outputPrice?: number }>;
+      models: Array<{
+        name: string;
+        contextWindow?: number;
+        supportsTools?: boolean;
+        supportsJson?: boolean;
+        thinkOff?: boolean;
+        tier?: "small" | "large";
+        inputPrice?: number;
+        outputPrice?: number;
+        embeddingDim?: number;
+      }>;
     },
   ) {
     await d.identity.require(ctx, "credential.manage");
+    const badDim = input.models.find((m) => m.embeddingDim !== undefined && m.embeddingDim !== EMBED_DIM);
+    if (badDim) throw invalid(`嵌入维度固定为 ${EMBED_DIM}（§8.7），${badDim.name} 为 ${badDim.embeddingDim}`, [{ path: "/models", message: "维度不符" }]);
     if (!/^https?:\/\//.test(input.baseUrl)) throw invalid("Base URL 需以 http(s):// 开头", [{ path: "/baseUrl", message: "格式不正确" }]);
     if (!input.models.length) throw invalid("至少登记一个模型", [{ path: "/models", message: "为空" }]);
     const pid = newId("mpv");
@@ -756,6 +863,7 @@ export function createLlm(d: { config: Config; db: Database; audit: Audit; event
           tier: m.tier ?? "small",
           inputPrice: m.inputPrice ?? null,
           outputPrice: m.outputPrice ?? null,
+          embeddingDim: m.embeddingDim ?? null,
         });
       await d.audit.write(ctx, {
         action: "model_provider.create",
@@ -779,9 +887,12 @@ export function createLlm(d: { config: Config; db: Database; audit: Audit; event
     if (!m) throw invalid("该供应商没有登记模型");
     const t0 = Date.now();
     try {
-      const r = await rawCall(m, p, { purpose: "admin.test", promptVersion: "test.v1", scope: {}, messages: [{ role: "user", content: "只回复 OK" }], modelPolicy: { maxTokens: 8 } });
+      // Embedding models cannot chat: test them with one embedding of the expected dimension.
+      const sample = m.embeddingDim
+        ? `${(await rawEmbed(m, p, ["连通性测试"]))[0]!.length} 维向量`
+        : (await rawCall(m, p, { purpose: "admin.test", promptVersion: "test.v1", scope: {}, messages: [{ role: "user", content: "只回复 OK" }], modelPolicy: { maxTokens: 8 } })).content.slice(0, 40);
       await d.audit.write(ctx, { action: "model_provider.test", resourceType: "model_provider", resourceId: p.id, after: { ok: true, latencyMs: Date.now() - t0 } });
-      return { ok: true, latencyMs: Date.now() - t0, sample: r.content.slice(0, 40) };
+      return { ok: true, latencyMs: Date.now() - t0, sample };
     } catch (e) {
       await d.audit.write(ctx, { action: "model_provider.test", resourceType: "model_provider", resourceId: p.id, after: { ok: false } });
       return { ok: false, latencyMs: Date.now() - t0, error: redactValue((e as Error).message).slice(0, 200) };
@@ -790,10 +901,29 @@ export function createLlm(d: { config: Config; db: Database; audit: Audit; event
 
   async function setDefaultModel(ctx: Ctx, name: string) {
     await d.identity.require(ctx, "tenant.settings");
+    await ensureDefaults(ctx.tenantId);
     if (!(await findModel(ctx.tenantId, name))) throw invalid("模型未登记", [{ path: "/name", message: "不存在" }]);
     await db.root.execute(sql`update tenant set settings = settings || ${JSON.stringify({ defaultModel: name })}::jsonb, updated_at = now() where id = ${ctx.tenantId}`);
     await d.audit.write(ctx, { action: "tenant.default_model", resourceType: "tenant", resourceId: ctx.tenantId, after: { defaultModel: name } });
     return { defaultModel: name };
+  }
+
+  /**
+   * Selects the tenant's embedding model (§8.7): it must be registered with dimension 768. `null`
+   * turns the vector route off. Indexes built with another model are rebuilt (the caller enqueues it).
+   */
+  async function setEmbeddingModel(ctx: Ctx, name: string | null) {
+    await d.identity.require(ctx, "tenant.settings");
+    await ensureDefaults(ctx.tenantId);
+    if (name !== null) {
+      const r = await findModel(ctx.tenantId, name);
+      if (!r) throw invalid("模型未登记", [{ path: "/name", message: "不存在" }]);
+      if (r.m.embeddingDim !== EMBED_DIM) throw invalid(`不是 ${EMBED_DIM} 维的嵌入模型`, [{ path: "/name", message: "维度不符" }]);
+    }
+    const before = await embeddingModelName(ctx.tenantId);
+    await db.root.execute(sql`update tenant set settings = settings || ${JSON.stringify({ embeddingModel: name })}::jsonb, updated_at = now() where id = ${ctx.tenantId}`);
+    await d.audit.write(ctx, { action: "tenant.embedding_model", resourceType: "tenant", resourceId: ctx.tenantId, before: { embeddingModel: before }, after: { embeddingModel: name } });
+    return { embeddingModel: name, changed: before !== name };
   }
 
   /* ───────────── budgets & usage (ADM-02) ───────────── */
@@ -862,33 +992,37 @@ export function createLlm(d: { config: Config; db: Database; audit: Audit; event
    * dimension does not match the vector column, or egress rules forbid the provider for the project.
    * Inputs are redacted first (LLM-10) and the call is metered (purpose "embed", OBS-补4).
    */
-  async function embed(ctx: Ctx, texts: string[], scope: LlmScope = {}): Promise<{ model: string; vectors: number[][] } | null> {
+  async function rawEmbed(m: ModelRow, p: ProviderRow, input: string[]): Promise<number[][]> {
+    if (p.kind === "scripted") return input.map(hashEmbed);
+    const key = await apiKeyFor(p);
+    const base = p.baseUrl.replace(/\/$/, "");
+    const ollama = p.dialect === "ollama";
+    const res = await doFetch(ollama ? `${base}/api/embed` : `${base}/embeddings`, {
+      method: "POST",
+      headers: { "content-type": "application/json", ...(key ? { authorization: `Bearer ${key}` } : {}) },
+      body: JSON.stringify({ model: m.name, input }),
+      signal: AbortSignal.timeout(timeoutMs),
+    });
+    if (!res.ok) throw new ProviderError(`HTTP ${res.status}: ${(await res.text()).slice(0, 200)}`, res.status >= 500, "server");
+    const body = (await res.json()) as { embeddings?: number[][]; data?: Array<{ embedding: number[] }> };
+    const vectors = ollama ? (body.embeddings ?? []) : (body.data ?? []).map((x) => x.embedding);
+    if (vectors.length !== input.length || vectors.some((v) => v.length !== EMBED_DIM)) throw new ProviderError(`嵌入维度或数量不符（返回 ${vectors[0]?.length ?? 0} 维）`, false, "client");
+    return vectors;
+  }
+
+  async function embed(ctx: Ctx, texts: string[], scope: LlmScope = {}, kind: "query" | "document" = "document"): Promise<{ model: string; vectors: number[][] } | null> {
     await ensureDefaults(ctx.tenantId);
     const name = await embeddingModelName(ctx.tenantId);
     if (!name || !texts.length) return null;
     const r = await findModel(ctx.tenantId, name);
     if (!r || r.m.embeddingDim !== EMBED_DIM) return null;
     if (await egressAllowed(scope.projectId, r.p)) return null;
-    const input = texts.map((t) => redactValue(t).slice(0, 8000));
+    const prefix = embedPrefix(r.m.name, kind);
+    const input = texts.map((t) => prefix + redactValue(t).slice(0, 8000));
     const t0 = Date.now();
     let vectors: number[][];
     try {
-      if (r.p.kind === "scripted") vectors = input.map(hashEmbed);
-      else {
-        const key = await apiKeyFor(r.p);
-        const base = r.p.baseUrl.replace(/\/$/, "");
-        const ollama = r.p.dialect === "ollama";
-        const res = await doFetch(ollama ? `${base}/api/embed` : `${base}/embeddings`, {
-          method: "POST",
-          headers: { "content-type": "application/json", ...(key ? { authorization: `Bearer ${key}` } : {}) },
-          body: JSON.stringify({ model: r.m.name, input }),
-          signal: AbortSignal.timeout(timeoutMs),
-        });
-        if (!res.ok) throw new ProviderError(`HTTP ${res.status}`, res.status >= 500, "server");
-        const body = (await res.json()) as { embeddings?: number[][]; data?: Array<{ embedding: number[] }> };
-        vectors = ollama ? (body.embeddings ?? []) : (body.data ?? []).map((x) => x.embedding);
-        if (vectors.length !== input.length || vectors.some((v) => v.length !== EMBED_DIM)) throw new ProviderError("嵌入维度或数量不符", false, "client");
-      }
+      vectors = await rawEmbed(r.m, r.p, input);
       await meter(
         ctx,
         { purpose: "embed", promptVersion: "embed@1", scope, messages: [] },
@@ -909,6 +1043,7 @@ export function createLlm(d: { config: Config; db: Database; audit: Audit; event
   return {
     embed,
     embeddingModelName,
+    setEmbeddingModel,
     complete,
     defaultModelName,
     ensureDefaults,

@@ -158,10 +158,14 @@ export function createQa(d: {
           verdict: { type: "string", enum: ["approved", "changes_requested"] },
           summary: S,
           comments: { type: "array", items: obj({ path: S, line: { type: "number" }, body: S }, ["body"]) },
-          criteria: { type: "object" },
-          testPlan: { type: "object" },
+          criteria: {
+            type: "object",
+            description: "逐条验收标准结论：键是验收标准 id（如 ac1），值只能是 met / unmet / na；理由写进 summary",
+            additionalProperties: { type: "string", enum: ["met", "unmet", "na"] },
+          },
+          testPlan: obj({ cases: { type: "array", items: S }, confirmedNote: S }),
         },
-        ["verdict"],
+        ["verdict", "summary"],
       ),
     },
     async run(ctx, args, st) {
@@ -176,7 +180,10 @@ export function createQa(d: {
         verdict,
         summary: asText(args.summary),
         comments,
-        criteria: (args.criteria && typeof args.criteria === "object" ? args.criteria : {}) as Record<string, "met" | "unmet" | "na">,
+        // Only `id → met|unmet|na` pairs count; anything richer is ignored rather than guessed at.
+        criteria: Object.fromEntries(
+          Object.entries(args.criteria && typeof args.criteria === "object" ? (args.criteria as Record<string, unknown>) : {}).filter(([, v]) => v === "met" || v === "unmet" || v === "na"),
+        ) as Record<string, "met" | "unmet" | "na">,
         testPlan: (args.testPlan && typeof args.testPlan === "object" ? args.testPlan : undefined) as Record<string, unknown> | undefined,
       });
       st.stop = "review_submitted";
@@ -306,20 +313,35 @@ export function createQa(d: {
         contextPackage: { policy: { agentId: a.id, toolAllowlist: d.runtime.effectiveTools(a) }, state, layerTokens: { L1: estimateTokens(ctxText) } },
       });
       const convo: ChatMsg[] = [];
-      while (steps < (a.budget.maxSteps ?? QA_MAX_STEPS)) {
+      const limit = a.budget.maxSteps ?? QA_MAX_STEPS;
+      const conclude = p.role === "reviewer" ? "submit_review" : "submit_test_result";
+      let grace = 0; // one extra conclusion-only step when the forced conclusion is rejected by validation
+      for (;;) {
+        if (steps >= limit + grace) {
+          stopReason = "max_steps";
+          break;
+        }
         const cur = (await db.root.select({ s: session.status }).from(session).where(eq(session.id, ses.id)))[0];
         if (cur?.s !== "running") {
           stopReason = "cancelled";
           break;
         }
+        // Thorough models keep reading until the budget runs out: the last step may only conclude.
+        const lastStep = steps >= limit - 1;
+        const tools = d.runtime.toolSpecs(a);
         let res;
         try {
           res = await d.llm.complete(actx, {
             purpose: p.role === "reviewer" ? "review.turn" : "test.turn",
             promptVersion: p.role === "reviewer" ? QA_PROMPTS.review : QA_PROMPTS.test,
             scope: { projectId: t.projectId, taskId: t.id, sessionId: ses.id, agentId: a.id },
-            messages: [{ role: "system", content: instructions }, { role: "user", content: ctxText }, ...convo],
-            tools: d.runtime.toolSpecs(a),
+            messages: [
+              { role: "system", content: instructions },
+              { role: "user", content: ctxText },
+              ...convo,
+              ...(lastStep && convo.length ? [{ role: "user" as const, content: `这是本轮最后一步：不要再读取或检索，立即调用 ${conclude} 给出结论（依据已掌握的信息；信息不足就如实写明）。` }] : []),
+            ],
+            tools: lastStep ? tools.filter((x) => x.name === conclude) : tools,
             modelPolicy: a.modelPolicy,
             dataClasses: ["code", "task"],
           });
@@ -338,16 +360,19 @@ export function createQa(d: {
           stopReason = "model_done";
           break;
         }
-        convo.push({ role: "assistant", content: `${res.content}\n<tool_calls>${JSON.stringify(calls)}</tool_calls>` });
-        const outs: string[] = [];
-        for (const call of calls) {
+        const ided = calls.map((c, i) => ({ id: `call_${steps}_${i}`, name: c.name, arguments: c.arguments }));
+        convo.push({ role: "assistant", content: res.content, toolCalls: ided });
+        const answered = new Set<string>();
+        for (const [ci, call] of calls.entries()) {
           const out = await d.runtime.invokeTool(actx, st, call as ParsedToolCall);
           const text = JSON.stringify(out).slice(0, 12_000);
           await d.runtime.recordTurn(ses.id, { role: "tool", content: text.slice(0, 4000), toolCalls: [call] });
-          outs.push(`<tool_result name="${call.name}">${text}</tool_result>`);
+          convo.push({ role: "tool", toolCallId: ided[ci]!.id, name: call.name, content: text });
+          answered.add(ided[ci]!.id);
           if (st.stop) break;
         }
-        convo.push({ role: "user", content: untrusted("tool", outs.join("\n")) });
+        for (const c of ided) if (!answered.has(c.id)) convo.push({ role: "tool", toolCallId: c.id, name: c.name, content: '{"ok":false,"error":"未执行"}' });
+        if (lastStep && !st.stop && grace === 0 && calls.some((c) => c.name === conclude)) grace = 1;
         if (st.stop) {
           stopReason = st.stop;
           break;

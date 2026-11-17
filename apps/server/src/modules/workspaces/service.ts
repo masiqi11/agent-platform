@@ -1,5 +1,5 @@
 import { existsSync } from "node:fs";
-import { mkdir, mkdtemp, readdir, rm, stat, statfs } from "node:fs/promises";
+import { mkdir, mkdtemp, readdir, rename, rm, stat, statfs } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { DEFAULT_PROJECT_SETTINGS, findSecrets, type ProjectSettings } from "@ap/shared";
@@ -76,22 +76,55 @@ export function createWorkspaces(d: { config: Config; db: Database; audit: Audit
   const { db } = d;
   const root = resolve(d.config.dirs.workspaces);
   const mirrorDir = (r: RepoRow) => join(resolve(d.config.dirs.repoCache), `${r.id}.git`);
+  /** In-process serialization of mirror syncs per repo (see syncMirror). */
+  const mirrorLocks = new Map<string, Promise<string>>();
 
   async function settingsOf(projectId: string): Promise<ProjectSettings> {
     const [p] = await db.root.select({ settings: project.settings }).from(project).where(eq(project.id, projectId));
     return { ...DEFAULT_PROJECT_SETTINGS, ...((p?.settings ?? {}) as Partial<ProjectSettings>) };
   }
 
-  /** Mirror cache (§12.7): one bare mirror per repo, refreshed before creating workspaces. */
-  async function syncMirror(r: RepoRow) {
+  /**
+   * Mirror cache (§12.7): one bare mirror per repo, refreshed before creating workspaces.
+   * Several jobs sync the same repo at once (e.g. kb.index and dev.turn right after binding): syncs
+   * of one repo are serialized in-process, and a first clone goes to a private directory that is
+   * renamed into place, so concurrent workers never clone into the same path.
+   */
+  function syncMirror(r: RepoRow): Promise<string> {
+    const prev = mirrorLocks.get(r.id) ?? Promise.resolve("");
+    const next = prev.catch(() => "").then(() => syncMirrorNow(r));
+    mirrorLocks.set(r.id, next);
+    void next
+      .finally(() => {
+        if (mirrorLocks.get(r.id) === next) mirrorLocks.delete(r.id);
+      })
+      .catch(() => undefined);
+    return next;
+  }
+
+  async function syncMirrorNow(r: RepoRow) {
     const scm = await d.repos.scmFor(r);
     const remote = await scm.gitRemote();
     try {
       const dir = mirrorDir(r);
-      if (!existsSync(join(dir, "HEAD"))) {
-        await mkdir(resolve(dir, ".."), { recursive: true });
-        await git(["clone", "-q", "--mirror", remote.url, dir], { cwd: "/", env: remote.env, timeoutMs: 600_000 });
-      } else await git(["fetch", "-q", "--prune", remote.url, "+refs/heads/*:refs/heads/*"], { cwd: dir, env: remote.env, timeoutMs: 600_000 });
+      const fetch = () => git(["fetch", "-q", "--prune", remote.url, "+refs/heads/*:refs/heads/*"], { cwd: dir, env: remote.env, timeoutMs: 600_000 });
+      if (existsSync(join(dir, "HEAD"))) {
+        await fetch();
+        return dir;
+      }
+      await mkdir(resolve(dir, ".."), { recursive: true });
+      const tmp = `${dir}.tmp-${newId("cln")}`;
+      try {
+        await git(["clone", "-q", "--mirror", remote.url, tmp], { cwd: "/", env: remote.env, timeoutMs: 600_000 });
+        try {
+          await rename(tmp, dir);
+        } catch {
+          // Another worker finished first: keep theirs and bring it up to date.
+          await fetch();
+        }
+      } finally {
+        await rm(tmp, { recursive: true, force: true });
+      }
       return dir;
     } catch (e) {
       await d.repos.onAuthError(r, e);

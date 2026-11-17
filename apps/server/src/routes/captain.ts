@@ -59,6 +59,7 @@ export const captainRoutes = (s: Services) =>
               tier: t.Optional(t.Union([t.Literal("small"), t.Literal("large")])),
               inputPrice: t.Optional(t.Number({ minimum: 0 })),
               outputPrice: t.Optional(t.Number({ minimum: 0 })),
+              embeddingDim: t.Optional(t.Number({ minimum: 1, maximum: 8192 })),
             }),
             { minItems: 1, maxItems: 20 },
           ),
@@ -68,6 +69,12 @@ export const captainRoutes = (s: Services) =>
     )
     .post("/admin/models/providers/:id/test", { params: P }, async ({ auth, params }) => s.llm.testProvider(await auth(), params.id))
     .put("/admin/models/default", { body: t.Object({ name: t.String({ minLength: 1 }) }) }, async ({ auth, body }) => s.llm.setDefaultModel(await auth(), body.name))
+    // §8.7: switching the embedding model rebuilds every knowledge index (queries keep using the old one until the alias switches).
+    .put("/admin/models/embedding", { body: t.Object({ name: t.Union([t.String({ minLength: 1 }), t.Null()]) }) }, async ({ auth, body }) => {
+      const ctx = await auth();
+      const r = await s.llm.setEmbeddingModel(ctx, body.name);
+      return { ...r, rebuildQueued: r.changed ? await s.knowledge.rebuildTenant(ctx.tenantId) : 0 };
+    })
     .get("/admin/usage", { query: t.Object({ days: t.Optional(t.Numeric({ minimum: 1, maximum: 90 })) }) }, async ({ auth, query }) => s.llm.usage(await auth(), query.days))
     .put(
       "/admin/budgets",

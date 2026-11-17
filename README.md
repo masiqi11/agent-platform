@@ -63,8 +63,9 @@ bun run dev
 - **沙箱**：开发默认 `SANDBOX=process`（子进程，无网络隔离，仅开发用）；生产必须 `SANDBOX=docker`，并设置 `SANDBOX_IMAGE`。沙箱里没有任何平台凭据，推送由控制面在沙箱外完成。
 - **体验主流程前半段**：`SEED_PASSWORD=… bun run seed` 后用 `owner@xinghe.test` 登录，在「支付服务」主群 @船长 说“支付服务最近超时，帮我查一下”，确认提议后开发 Agent 会在 `task/<编号>` 分支上修复、推送、开 MR；评审 Agent 提两条意见，开发 Agent 返工；评审通过后测试 Agent 在独立环境测试；之后在「收件箱」批准合并审批，合并队列完成合并、关闭 Issue，船长在群里发完成摘要。全程不需要模型密钥（脚本模型）。
 - 设计取舍见 `docs/adr/0006-s5-code-execution.md`、`docs/adr/0007-s6-review-test-merge.md`。
-- **知识库**：`bun run seed` 后仓库在后台建索引。项目「知识库」页可问项目船长、看三路检索如何命中；工作台「问全局船长」问“超时相关的计费逻辑在哪个仓库哪个文件”，会询问计费服务的船长并给出可点击的引用。演示用确定性嵌入 `scripted:embed`；换真实嵌入模型时在租户设置 `embeddingModel`（维度须为 768），变更后自动全量重建。
+- **知识库**：`bun run seed` 后仓库在后台建索引。项目「知识库」页可问项目船长、看三路检索如何命中；工作台「问全局船长」问“超时相关的计费逻辑在哪个仓库哪个文件”，会询问计费服务的船长并给出可点击的引用。演示用确定性嵌入 `scripted:embed`。**换真实嵌入模型**：本地起 Ollama 并拉取 `embeddinggemma`（多语言，768 维，推荐）或 `nomic-embed-text`，在「管理 → 模型与预算」登记供应商、用途选「嵌入模型」，再在「知识库嵌入」里切换，所有索引会后台全量重建。对比评测：`OLLAMA_URL=… EMBED_MODEL=embeddinggemma bun test/kb/embed-eval.ts`（在 `apps/server` 下运行）。
 - **真实 GitLab 实测**：`scripts/gitlab-local.sh up` 在 docker 里起 GitLab CE + Runner（约 4 GB 内存，首次启动 3–5 分钟），建好演示项目、受保护分支（推送 Maintainers、合并 Developers + Maintainers）、Developer 项目令牌和 Runner，并打印运行 `test/gitlab/s6-gitlab.ts` 的命令；`down` 删除容器。也可以对已有 GitLab 用手动工作流 `gitlab-e2e`（仓库密钥 `GITLAB_E2E_URL` / `GITLAB_E2E_TOKEN`）。
+- **真实模型实测**：`apps/server/test/ollama/` 下的 `s4-scenario.ts`（船长）、`s6-scenario.ts`（主场景第 4–8 步）、`s7-scenario.ts`（知识库问答）可以对任何 OpenAI 兼容端点或本地 Ollama 运行：`LLM_BASE_URL=… LLM_MODEL=… LLM_API_KEY=… RESULT=<名称> bun test/ollama/s6-scenario.ts`（需要 `TEST_DATABASE_URL`）。Claude Opus 5.5 的结果和发现的问题见 ADR-0009。
 
 ## 目录
 

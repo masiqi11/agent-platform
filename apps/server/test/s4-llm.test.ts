@@ -2,7 +2,7 @@ import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { and, eq } from "drizzle-orm";
 import type { Ctx } from "../src/core/context";
 import { budget, llmCall, modelProvider, project, tenant } from "../src/db/schema";
-import { createLlm } from "../src/modules/llm/service";
+import { createLlm, textHistory, type ChatMsg } from "../src/modules/llm/service";
 import { createTestApp, type TestApp } from "./helpers";
 
 process.env.LLM_BACKOFF_MS = "2";
@@ -94,7 +94,7 @@ describe("S4 model gateway", () => {
     expect(r.tokensOut).toBe(2);
   });
 
-  test("OpenAI SSE with streamed tool_call fragments; key sent but never stored in plaintext", async () => {
+  test("OpenAI SSE with streamed tool_call fragments, keep-alive comments and event lines; key sent but never stored in plaintext", async () => {
     await provider("远端", "openai", [{ name: "remote-small", supportsTools: true }], { isExternal: true, apiKey: "test-key-not-real-0042" });
     handler = () => {
       const chunks = [
@@ -103,7 +103,9 @@ describe("S4 model gateway", () => {
         { choices: [{ delta: { tool_calls: [{ index: 0, function: { arguments: '"修复"}' } }] } }] },
         { choices: [], usage: { prompt_tokens: 11, completion_tokens: 4 } },
       ];
-      return new Response(chunks.map((c) => `data: ${JSON.stringify(c)}\n\n`).join("") + "data: [DONE]\n\n", { headers: { "content-type": "text/event-stream" } });
+      // Real gateways interleave `: ping` keep-alives and `event:` lines (found on a relay in front of Claude).
+      const body = chunks.map((c, i) => `${i === 1 ? ": ping\n\n" : ""}event: message\ndata: ${JSON.stringify(c)}\n\n`).join("") + ": ping\n\ndata: [DONE]\n\n";
+      return new Response(body, { headers: { "content-type": "text/event-stream" } });
     };
     const r = await t.s.llm.complete(ctx, {
       purpose: "test.sse",
@@ -123,6 +125,111 @@ describe("S4 model gateway", () => {
     expect(list.providers.find((p: { name: string }) => p.name === "远端").keyLast4).toBe("0042");
     const [row] = await t.s.db.root.select().from(llmCall).where(eq(llmCall.purpose, "test.sse"));
     expect(row!.dataClasses).toEqual(["chat"]);
+  });
+
+  test("parallel tool calls streamed with the same index but different ids stay separate", async () => {
+    handler = () => {
+      const tc = (x: Record<string, unknown>) => ({ choices: [{ delta: { tool_calls: [x] } }] });
+      const chunks = [
+        tc({ index: 0, id: "toolu_a", type: "function", function: { name: "search_knowledge", arguments: "" } }),
+        tc({ index: 0, function: { arguments: '{"query": "支付' } }),
+        tc({ index: 0, function: { arguments: ' 超时"}' } }),
+        tc({ index: 0, id: "toolu_b", type: "function", function: { name: "ask_question", arguments: "" } }),
+        tc({ index: 0, function: { arguments: '{"question": "从什么时候开始？"}' } }),
+        { choices: [{ delta: {}, finish_reason: "tool_calls" }] },
+      ];
+      return new Response(chunks.map((c) => `data: ${JSON.stringify(c)}\n\n`).join("") + "data: [DONE]\n\n", { headers: { "content-type": "text/event-stream" } });
+    };
+    const r = await t.s.llm.complete(ctx, {
+      purpose: "test.sse.parallel",
+      promptVersion: "v",
+      scope: {},
+      modelPolicy: { primary: "remote-small" },
+      messages: [{ role: "user", content: "x" }],
+      tools: [
+        { name: "search_knowledge", description: "s", parameters: {} },
+        { name: "ask_question", description: "q", parameters: {} },
+      ],
+      onDelta: () => {},
+    });
+    expect(r.toolCalls).toEqual([
+      { name: "search_knowledge", arguments: { query: "支付 超时" } },
+      { name: "ask_question", arguments: { question: "从什么时候开始？" } },
+    ]);
+  });
+
+  test("streamed tool arguments that cannot be reassembled → the same request is retried once without streaming", async () => {
+    // Pattern seen on a Claude relay: two calls opened at index 0 and 1, then every argument fragment under index 1, interleaved.
+    handler = (body) => {
+      if (!body.stream)
+        return Response.json({
+          choices: [
+            {
+              message: {
+                content: "",
+                tool_calls: [
+                  { id: "a", type: "function", function: { name: "search_knowledge", arguments: '{"query":"支付服务 /pay/callback"}' } },
+                  { id: "b", type: "function", function: { name: "search_knowledge", arguments: '{"query":"pay service timeout"}' } },
+                ],
+              },
+              finish_reason: "tool_calls",
+            },
+          ],
+        });
+      const tc = (x: Record<string, unknown>) => ({ choices: [{ delta: { tool_calls: [x] } }] });
+      const chunks = [
+        tc({ index: 0, id: "a", type: "function", function: { name: "search_knowledge", arguments: "" } }),
+        tc({ index: 0, function: { arguments: '{"query": "支付服务 /pa' } }),
+        tc({ index: 1, id: "b", type: "function", function: { name: "search_knowledge", arguments: "" } }),
+        tc({ index: 1, function: { arguments: '{"query": "p' } }),
+        tc({ index: 1, function: { arguments: 'y/callback"}' } }),
+        tc({ index: 1, function: { arguments: 'ay service timeout"}' } }),
+      ];
+      return new Response(chunks.map((c) => `data: ${JSON.stringify(c)}\n\n`).join("") + "data: [DONE]\n\n", { headers: { "content-type": "text/event-stream" } });
+    };
+    const before = seen.length;
+    const r = await t.s.llm.complete(ctx, {
+      purpose: "test.sse.mislabeled",
+      promptVersion: "v",
+      scope: {},
+      modelPolicy: { primary: "remote-small" },
+      messages: [{ role: "user", content: "x" }],
+      tools: [{ name: "search_knowledge", description: "s", parameters: {} }],
+      onDelta: () => {},
+    });
+    expect(seen.slice(before).map((x) => x.body.stream)).toEqual([true, false]);
+    expect(r.toolCalls).toEqual([
+      { name: "search_knowledge", arguments: { query: "支付服务 /pay/callback" } },
+      { name: "search_knowledge", arguments: { query: "pay service timeout" } },
+    ]);
+  });
+
+  test("agent tool history goes out as native tool messages (OpenAI and Ollama); scripted models get text", async () => {
+    const history: ChatMsg[] = [
+      { role: "system", content: "s" },
+      { role: "user", content: "修复超时" },
+      { role: "assistant", content: "先看文件", toolCalls: [{ id: "call_0_0", name: "read_file", arguments: { path: "src/gateway.ts" } }] },
+      { role: "tool", toolCallId: "call_0_0", name: "read_file", content: '{"ok":true,"result":{"content":"x"}}' },
+    ];
+    const tools = [{ name: "read_file", description: "r", parameters: {} }];
+    handler = () => Response.json({ choices: [{ message: { content: "ok" } }] });
+    await t.s.llm.complete(ctx, { purpose: "test.history", promptVersion: "v", scope: {}, modelPolicy: { primary: "remote-small" }, messages: history, tools });
+    const sent = seen.at(-1).body.messages as Array<Record<string, unknown>>;
+    expect(sent[2]).toMatchObject({ role: "assistant", tool_calls: [{ id: "call_0_0", type: "function", function: { name: "read_file", arguments: '{"path":"src/gateway.ts"}' } }] });
+    expect(sent[3]).toMatchObject({ role: "tool", tool_call_id: "call_0_0" });
+    expect(String(sent[3]!.content)).toContain('<untrusted source="tool">');
+    expect(JSON.stringify(sent)).not.toContain("<tool_calls>");
+
+    handler = () => ollamaReply("ok");
+    await t.s.llm.complete(ctx, { purpose: "test.history", promptVersion: "v", scope: {}, modelPolicy: { primary: "gemma4:e2b" }, messages: history, tools });
+    const ol = seen.at(-1).body.messages as Array<Record<string, unknown>>;
+    expect(ol[2]).toMatchObject({ role: "assistant", tool_calls: [{ function: { name: "read_file", arguments: { path: "src/gateway.ts" } } }] });
+    expect(ol[3]).toMatchObject({ role: "tool", tool_name: "read_file" });
+
+    const text = textHistory(history);
+    expect(text.map((m) => m.role)).toEqual(["system", "user", "assistant", "user"]);
+    expect(text[2]!.content).toContain('<tool_calls>[{"name":"read_file"');
+    expect(text[3]!.content).toContain('<tool_result name="read_file">');
   });
 
   test("LLM-10: secrets are redacted before leaving", async () => {

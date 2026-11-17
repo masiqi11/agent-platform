@@ -1,5 +1,5 @@
 import { useMutation, useQuery } from "@tanstack/react-query";
-import { Cpu, Gauge, Globe2, HardDrive, KeyRound, PauseCircle, PlayCircle, Plug, Plus, Wallet } from "lucide-react";
+import { Cpu, Gauge, Globe2, HardDrive, KeyRound, Layers, PauseCircle, PlayCircle, Plug, Plus, Wallet } from "lucide-react";
 import { useState } from "react";
 import { toast } from "sonner";
 import { ErrorState, PageHeader, PageSkeleton } from "@/components/states";
@@ -58,6 +58,7 @@ function AddProviderDialog({ open, onOpenChange }: { open: boolean; onOpenChange
   const [tools, setTools] = useState(true);
   const [json, setJson] = useState(true);
   const [thinkOff, setThinkOff] = useState(true);
+  const [purpose, setPurpose] = useState<"chat" | "embed">("chat");
   const m = useMutation({
     mutationFn: () =>
       unwrap(
@@ -67,7 +68,7 @@ function AddProviderDialog({ open, onOpenChange }: { open: boolean; onOpenChange
           dialect,
           isExternal,
           apiKey: apiKey || undefined,
-          models: [{ name: model, contextWindow: ctx, supportsTools: tools, supportsJson: json, thinkOff }],
+          models: [purpose === "embed" ? { name: model, embeddingDim: 768 } : { name: model, contextWindow: ctx, supportsTools: tools, supportsJson: json, thinkOff }],
         }),
       ),
     onSuccess: () => {
@@ -111,24 +112,47 @@ function AddProviderDialog({ open, onOpenChange }: { open: boolean; onOpenChange
             <Label>API Key（可选）</Label>
             <Input type="password" value={apiKey} onChange={(e) => setKey(e.target.value)} autoComplete="off" />
           </div>
-          <div className="grid grid-cols-[1fr_120px] gap-3">
+          <div className="space-y-1.5">
+            <Label>用途</Label>
+            <Select
+              value={purpose}
+              onValueChange={(v) => {
+                setPurpose(v as "chat" | "embed");
+                if (v === "embed" && model === "gemma4:e2b") setModel("embeddinggemma");
+                if (v === "chat" && model === "embeddinggemma") setModel("gemma4:e2b");
+              }}
+            >
+              <SelectTrigger className="w-full" aria-label="用途">
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="chat">对话模型（船长与 Agent）</SelectItem>
+                <SelectItem value="embed">嵌入模型（知识库向量检索，须为 768 维）</SelectItem>
+              </SelectContent>
+            </Select>
+          </div>
+          <div className={cn("grid gap-3", purpose === "chat" && "grid-cols-[1fr_120px]")}>
             <div className="space-y-1.5">
               <Label>模型名</Label>
               <Input value={model} onChange={(e) => setModel(e.target.value)} className="font-mono text-xs" />
             </div>
-            <div className="space-y-1.5">
-              <Label>上下文窗口</Label>
-              <Input type="number" value={ctx} onChange={(e) => setCtx(Number(e.target.value))} />
-            </div>
+            {purpose === "chat" && (
+              <div className="space-y-1.5">
+                <Label>上下文窗口</Label>
+                <Input type="number" value={ctx} onChange={(e) => setCtx(Number(e.target.value))} />
+              </div>
+            )}
           </div>
+          {purpose === "embed" && <p className="text-xs text-muted-foreground">向量列固定为 768 维。本地可用 embeddinggemma（多语言）或 nomic-embed-text。登记后在「知识库嵌入」里选用。</p>}
           <div className="flex flex-wrap gap-4 text-sm">
-            {(
-              [
-                ["工具调用", tools, setTools],
-                ["JSON 模式", json, setJson],
-                ["关闭思考（think:false）", thinkOff, setThinkOff],
-                ["外部供应商", isExternal, setExternal],
-              ] as const
+            {(purpose === "embed"
+              ? ([["外部供应商", isExternal, setExternal]] as const)
+              : ([
+                  ["工具调用", tools, setTools],
+                  ["JSON 模式", json, setJson],
+                  ["关闭思考（think:false）", thinkOff, setThinkOff],
+                  ["外部供应商", isExternal, setExternal],
+                ] as const)
             ).map(([l, v, set]) => (
               <label key={l} className="flex items-center gap-1.5">
                 <Checkbox checked={v} onCheckedChange={(c) => set(c === true)} /> {l}
@@ -146,7 +170,7 @@ function AddProviderDialog({ open, onOpenChange }: { open: boolean; onOpenChange
   );
 }
 
-function ProviderCard({ p, defaultModel }: { p: NonNullable<ReturnType<typeof useModels>["data"]>["providers"][number]; defaultModel: string }) {
+function ProviderCard({ p, defaultModel, embeddingModel }: { p: NonNullable<ReturnType<typeof useModels>["data"]>["providers"][number]; defaultModel: string; embeddingModel: string | null }) {
   const [result, setResult] = useState<string | null>(null);
   const test = useMutation({
     mutationFn: () => unwrap(api.api.v1.admin.models.providers({ id: p.id }).test.post()),
@@ -189,19 +213,72 @@ function ProviderCard({ p, defaultModel }: { p: NonNullable<ReturnType<typeof us
           <div key={m.id} className="flex flex-wrap items-center gap-2 px-3 py-2 text-[13px]">
             <span className="font-mono">{m.name}</span>
             {m.name === defaultModel && <span className="rounded-full bg-primary px-1.5 py-px text-[10px] text-primary-foreground">租户默认</span>}
+            {m.name === embeddingModel && <span className="rounded-full bg-agent px-1.5 py-px text-[10px] text-white">知识库嵌入</span>}
             <span className="text-[11px] text-muted-foreground">
-              {fmt(m.contextWindow)} 上下文{m.supportsTools ? " · 工具" : ""}
-              {m.supportsJson ? " · JSON" : ""}
-              {m.thinkOff ? " · think:false" : ""}
+              {m.embeddingDim ? (
+                `嵌入 · ${m.embeddingDim} 维`
+              ) : (
+                <>
+                  {fmt(m.contextWindow)} 上下文{m.supportsTools ? " · 工具" : ""}
+                  {m.supportsJson ? " · JSON" : ""}
+                  {m.thinkOff ? " · think:false" : ""}
+                </>
+              )}
             </span>
             {m.notes && <span className="text-[11px] text-muted-foreground/80">· {m.notes}</span>}
-            {m.name !== defaultModel && (
+            {!m.embeddingDim && m.name !== defaultModel && (
               <Button size="sm" variant="ghost" className="ml-auto h-6 px-2 text-xs" onClick={() => setDefault.mutate(m.name)}>
                 设为默认
               </Button>
             )}
           </div>
         ))}
+      </div>
+    </div>
+  );
+}
+
+/** §8.7: which model embeds the knowledge base. Changing it rebuilds every index (queries keep the old one until each switch). */
+function EmbeddingCard() {
+  const q = useModels();
+  const [pending, setPending] = useState<string | null>(null);
+  const save = useMutation({
+    mutationFn: (name: string | null) => unwrap(api.api.v1.admin.models.embedding.put({ name })),
+    onSuccess: (r) => {
+      void queryClient.invalidateQueries({ queryKey: ck.models });
+      toast.success(r.changed ? `已切换，已排队重建 ${r.rebuildQueued} 个索引` : "未变化");
+      setPending(null);
+    },
+    onError: (e) => toast.error(e.message),
+  });
+  if (!q.data) return null;
+  const options = q.data.providers.flatMap((p) => p.models.filter((m) => m.embeddingDim === 768).map((m) => ({ name: m.name, provider: p.name, external: p.isExternal })));
+  const current = q.data.embeddingModel ?? "__off";
+  const value = pending ?? current;
+  return (
+    <div className="rounded-xl border bg-card p-4" data-testid="embedding-card">
+      <h3 className="flex items-center gap-2 text-sm font-medium">
+        <Layers className="size-4" /> 知识库嵌入
+      </h3>
+      <p className="mt-1 text-xs text-muted-foreground">知识库向量检索用的模型（768 维）。切换后所有项目的索引会在后台全量重建，重建完成前查询仍用旧索引。</p>
+      <div className="mt-3 flex gap-2">
+        <Select value={value} onValueChange={setPending}>
+          <SelectTrigger className="min-w-0 flex-1 truncate" aria-label="嵌入模型">
+            <SelectValue />
+          </SelectTrigger>
+          <SelectContent>
+            {options.map((o) => (
+              <SelectItem key={o.name} value={o.name}>
+                {o.name} · {o.provider}
+                {o.external ? "（外部）" : ""}
+              </SelectItem>
+            ))}
+            <SelectItem value="__off">关闭向量检索</SelectItem>
+          </SelectContent>
+        </Select>
+        <Button variant="outline" className="shrink-0" disabled={value === current || save.isPending} onClick={() => save.mutate(value === "__off" ? null : value)}>
+          切换
+        </Button>
       </div>
     </div>
   );
@@ -332,7 +409,7 @@ export function ModelsPage() {
     <div className="mx-auto max-w-5xl">
       <PageHeader
         title="模型与预算"
-        description="模型供应商、租户默认模型、Agent 暂停开关、预算与用量。"
+        description="模型供应商、租户默认模型、知识库嵌入模型、Agent 暂停开关、预算与用量。"
         actions={
           <Button onClick={() => setAdd(true)}>
             <Plus className="size-4" /> 登记供应商
@@ -341,11 +418,18 @@ export function ModelsPage() {
       />
       <div className="grid gap-4 lg:grid-cols-[1fr_360px]">
         <div className="space-y-3">
-          {q.isPending ? <PageSkeleton rows={3} /> : q.error ? <ErrorState error={q.error} /> : q.data.providers.map((p) => <ProviderCard key={p.id} p={p} defaultModel={q.data.defaultModel} />)}
+          {q.isPending ? (
+            <PageSkeleton rows={3} />
+          ) : q.error ? (
+            <ErrorState error={q.error} />
+          ) : (
+            q.data.providers.map((p) => <ProviderCard key={p.id} p={p} defaultModel={q.data.defaultModel} embeddingModel={q.data.embeddingModel} />)
+          )}
           <UsageCard />
         </div>
         <div className="space-y-4">
           <PauseCard />
+          <EmbeddingCard />
           <BudgetCard />
         </div>
       </div>

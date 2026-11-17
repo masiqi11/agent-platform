@@ -414,11 +414,44 @@ export const rogueScript: Script = (req) => {
   };
 };
 
+/**
+ * Looks things up before acting, like strong models do: first turn → search_knowledge only; once
+ * the tool results are in the conversation → propose_task. Exercises the captain's read-tool loop.
+ */
+export const searchFirstScript: Script = (req) => {
+  if (req.purpose !== "captain.turn") return demoScript(req);
+  const all = req.messages.map((m) => m.content).join("\n");
+  if (!all.includes("<tool_result")) return { content: "我先查一下知识库。", toolCalls: [{ name: "search_knowledge", arguments: { query: "导出 CSV" } }] };
+  return {
+    content: "查过了，知识库里没有相关实现，整理成任务提议：",
+    toolCalls: [
+      { name: "propose_task", arguments: { title: "导出功能支持 CSV", description: "导出支持 CSV 格式（检索后提议）", type: "feature", priority: "P2", acceptanceCriteria: ["支持中文表头"] } },
+    ],
+  };
+};
+
+/**
+ * A reviewer that keeps reading as long as it is allowed (like thorough real models), concludes only
+ * when submit_review is the sole tool offered, and gets that first call wrong: exercises the
+ * last-step rule and its one correction step.
+ */
+export const explorerScript: Script = (req) => {
+  if (req.purpose !== "review.turn") return demoScript(req);
+  if (req.toolNames.length === 1 && req.toolNames[0] === "submit_review") {
+    // First forced attempt is malformed (no verdict), like a real model's mangled call; it corrects after the error.
+    const rejected = req.messages.some((m) => /<tool_result name="submit_review">\{"ok":false/.test(m.content));
+    return rejected ? reviewerScript(req) : { content: "", toolCalls: [{ name: "submit_review", arguments: { summary: "看起来不错" } }] };
+  }
+  return { content: "再看一下 README。", toolCalls: [{ name: "read_file", arguments: { path: "README.md" } }] };
+};
+
 export const SCRIPTS: Record<string, Script> = {
   demo: demoScript,
   nonsense: nonsenseScript,
   text_tools: textToolsScript,
   rogue: rogueScript,
+  search_first: searchFirstScript,
+  explorer: explorerScript,
 };
 
 /** Extra scripts registered by tests. */
