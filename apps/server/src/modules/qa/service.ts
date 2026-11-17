@@ -412,7 +412,7 @@ export function createQa(d: {
             break;
           }
           const ided = calls.map((c, i) => ({ id: `call_${steps}_${i}`, name: c.name, arguments: c.arguments }));
-          convo.push({ role: "assistant", content: res.content, toolCalls: ided });
+          convo.push({ role: "assistant", content: res.content, toolCalls: ided, ...(res.reasoning !== undefined ? { reasoning: res.reasoning } : {}) });
           const answered = new Set<string>();
           for (const [ci, call] of calls.entries()) {
             const out = await d.runtime.invokeTool(actx, st, call as ParsedToolCall);

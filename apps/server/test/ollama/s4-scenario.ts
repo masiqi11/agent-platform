@@ -160,4 +160,9 @@ const out = { ranAt: new Date().toISOString(), host: process.env.RESULT_HOST ?? 
 writeFileSync(join(import.meta.dir, `../../../../docs/results/${RESULT}.json`), `${JSON.stringify(out, null, 2)}\n`);
 process.stdout.write(JSON.stringify(stat, null, 2) + "\n");
 await t.close();
-process.exit(0);
+// #8: a failed step fails the run; a step a deterministic fallback completed is reported, not counted as the model's.
+const failed = steps.filter((s) => !s.pass);
+const byFallback = steps.filter((s) => s.pass && s.by === "fallback");
+if (byFallback.length) console.log(`fallback 完成（不计为模型原生成功）：${byFallback.map((s) => s.step).join("、")}`);
+if (failed.length) console.log(`失败：${failed.map((s) => s.step).join("、")}`);
+process.exit(failed.length ? 1 : 0);

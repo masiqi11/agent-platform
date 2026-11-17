@@ -25,7 +25,13 @@ type ModelRow = typeof model.$inferSelect;
  */
 export type ChatMsg =
   | { role: "system" | "user"; content: string }
-  | { role: "assistant"; content: string; toolCalls?: Array<{ id: string; name: string; arguments: Record<string, unknown> }> }
+  | {
+      role: "assistant";
+      content: string;
+      toolCalls?: Array<{ id: string; name: string; arguments: Record<string, unknown> }>;
+      /** Thinking-mode providers (DeepSeek) require the turn's reasoning_content back on the next request. */
+      reasoning?: string;
+    }
   | { role: "tool"; content: string; toolCallId: string; name: string };
 
 const wrapUntrusted = (body: string) => `<untrusted source="tool">\n${body.replace(/<\/?untrusted/gi, "‹untrusted")}\n</untrusted>`;
@@ -64,8 +70,15 @@ function openAiMessages(messages: ChatMsg[]) {
     m.role === "tool"
       ? { role: "tool", tool_call_id: m.toolCallId, content: wrapUntrusted(m.content) }
       : m.role === "assistant" && m.toolCalls?.length
-        ? { role: "assistant", content: m.content || null, tool_calls: m.toolCalls.map((c) => ({ id: c.id, type: "function", function: { name: c.name, arguments: JSON.stringify(c.arguments) } })) }
-        : { role: m.role, content: m.content },
+        ? {
+            role: "assistant",
+            content: m.content || null,
+            ...(m.reasoning !== undefined ? { reasoning_content: m.reasoning } : {}),
+            tool_calls: m.toolCalls.map((c) => ({ id: c.id, type: "function", function: { name: c.name, arguments: JSON.stringify(c.arguments) } })),
+          }
+        : m.role === "assistant" && m.reasoning !== undefined
+          ? { role: "assistant", content: m.content, reasoning_content: m.reasoning }
+          : { role: m.role, content: m.content },
   );
 }
 
@@ -107,6 +120,8 @@ export interface CompleteInput {
 export interface CompleteResult {
   content: string;
   toolCalls: ParsedToolCall[];
+  /** Provider reasoning to keep in the agent's tool history (DeepSeek thinking mode). */
+  reasoning?: string;
   toolMode: "native" | "text" | "none";
   json?: unknown;
   valid: boolean;
@@ -147,6 +162,8 @@ export class LlmUnavailable extends DomainError {
 interface RawReply {
   content: string;
   toolCalls: ParsedToolCall[];
+  /** reasoning_content of thinking-mode providers; passed back with the tool history. */
+  reasoning?: string;
   tokensIn?: number;
   tokensOut?: number;
 }
@@ -619,7 +636,11 @@ export function createLlm(d: { config: Config; db: Database; audit: Audit; event
       const take = (j: Record<string, unknown>, delta: boolean) => {
         const ch = ((j.choices as unknown[]) ?? [])[0] as Record<string, unknown> | undefined;
         if (ch?.finish_reason === "content_filter") refused = true;
-        const msg = (delta ? ch?.delta : ch?.message) as { content?: string; tool_calls?: Array<{ index?: number; id?: string; function?: { name?: string; arguments?: string } }> } | undefined;
+        const msg = (delta ? ch?.delta : ch?.message) as
+          | { content?: string; reasoning_content?: string; tool_calls?: Array<{ index?: number; id?: string; function?: { name?: string; arguments?: string } }> }
+          | undefined;
+        // Present (even empty) means thinking mode: the field must go back with the tool history.
+        if (typeof msg?.reasoning_content === "string") out.reasoning = (out.reasoning ?? "") + msg.reasoning_content;
         if (msg?.content) {
           out.content += msg.content;
           if (delta) req.onDelta?.(msg.content);
@@ -836,7 +857,22 @@ export function createLlm(d: { config: Config; db: Database; audit: Audit; event
             d.config.llmRecordFile,
             `${JSON.stringify({ purpose: input.purpose, model: m.name, tools: (input.tools ?? []).map((x) => x.name), content: redactValue(content), toolCalls: JSON.parse(redactValue(JSON.stringify(toolCalls))) })}\n`,
           );
-        return { content, toolCalls, toolMode, json, valid, repaired, model: m.name, providerId: p.id, tokensIn: tin, tokensOut: tout, cost, latencyMs, usedFallback: Boolean(prev) };
+        return {
+          content,
+          toolCalls,
+          toolMode,
+          json,
+          valid,
+          repaired,
+          model: m.name,
+          providerId: p.id,
+          tokensIn: tin,
+          tokensOut: tout,
+          cost,
+          latencyMs,
+          usedFallback: Boolean(prev),
+          ...(a.r.reasoning !== undefined ? { reasoning: a.r.reasoning } : {}),
+        };
       } catch (e) {
         if (e instanceof BudgetExceeded) throw e;
         reasons.push(`${m.name}: ${(e as Error).message}`);
