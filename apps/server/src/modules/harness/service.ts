@@ -21,7 +21,7 @@ type AgentRow = typeof agent.$inferSelect;
 export const HARNESS_MCP_TOOLS: Record<HarnessRole, readonly string[]> = {
   dev: ["get_task", "add_task_comment", "block_task", "search_knowledge", "ask_project_captain"],
   reviewer: ["get_task", "get_diff", "submit_review", "add_task_comment", "search_knowledge"],
-  tester: ["get_task", "submit_test_result", "add_task_comment", "search_knowledge"],
+  tester: ["get_task", "run_tests", "submit_test_result", "add_task_comment", "search_knowledge"],
 };
 
 /** Run context kept on the session (not in memory): an MCP call may reach another process. */
@@ -154,7 +154,7 @@ export function createHarness(d: { config: Config; db: Database; sandbox: Sandbo
 
   /* ───────────── platform MCP endpoint (streamable HTTP, JSON responses) ───────────── */
 
-  async function turnStateFor(ctx: Ctx): Promise<{ st: TurnState; role: HarnessRole } | { error: string }> {
+  async function turnStateFor(ctx: Ctx): Promise<{ st: TurnState; role: HarnessRole; c: HarnessRunContext } | { error: string }> {
     if (ctx.actor.kind !== "agent" || !ctx.actor.sessionId || !ctx.actor.agentId) return { error: "只接受 Agent 会话令牌" };
     const [ses] = await db.root.select().from(session).where(eq(session.id, ctx.actor.sessionId));
     const c = (ses?.checkpoint as { harness?: HarnessRunContext | null } | undefined)?.harness;
@@ -164,6 +164,7 @@ export function createHarness(d: { config: Config; db: Database; sandbox: Sandbo
     const ws = c.workspaceId ? (await db.root.select().from(workspace).where(eq(workspace.id, c.workspaceId)))[0] : undefined;
     return {
       role: c.role,
+      c,
       st: {
         agent: a,
         projectId: a.projectId ?? "",
@@ -202,7 +203,10 @@ export function createHarness(d: { config: Config; db: Database; sandbox: Sandbo
     if (m.method === "tools/call") {
       const name = typeof m.params?.name === "string" ? m.params.name : "";
       if (!specs.some((t) => t.name === name)) return reply(m.id, { content: [{ type: "text", text: `工具 ${name} 不可用` }], isError: true });
+      const before = JSON.stringify(s.st.scratch ?? {});
       const out = await d.runtime.invokeTool(ctx, s.st, { name, arguments: (m.params?.arguments ?? {}) as Record<string, unknown> });
+      // Tool state (e.g. the tester's last test log, cited by its conclusion) outlives this one call.
+      if (JSON.stringify(s.st.scratch ?? {}) !== before) await setContext(s.st.sessionId, { ...s.c, scratch: s.st.scratch });
       await d.runtime.recordTurn(s.st.sessionId, { role: "tool", content: JSON.stringify(out).slice(0, 4000), toolCalls: [{ name, arguments: m.params?.arguments ?? {} }] });
       return reply(m.id, { content: [{ type: "text", text: JSON.stringify(out.ok ? out.result : { error: out.error }) }], isError: !out.ok });
     }

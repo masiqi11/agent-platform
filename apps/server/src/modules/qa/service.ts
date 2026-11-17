@@ -1,5 +1,5 @@
 import { asText, estimateTokens, type DomainEvent, type ParsedToolCall } from "@ap/shared";
-import { and, desc, eq, sql } from "drizzle-orm";
+import { and, desc, eq, gte, inArray, sql } from "drizzle-orm";
 import type { Audit } from "../../core/audit";
 import type { Ctx } from "../../core/context";
 import { DomainError, invalid } from "../../core/errors";
@@ -9,7 +9,8 @@ import { RetryLater, type createJobs } from "../../core/jobs";
 import { log, redactValue } from "../../core/logger";
 import type { ObjectStore } from "../../core/object-store";
 import type { Database } from "../../db";
-import { agent, artifact, project, review, session, task, taskComment } from "../../db/schema";
+import { agent, artifact, project, review, session, task, taskComment, testRun } from "../../db/schema";
+import type { Harness } from "../harness/service";
 import type { Identity } from "../identity/service";
 import { BudgetExceeded, LlmUnavailable, type ChatMsg, type Llm } from "../llm/service";
 import type { Quality } from "../quality/service";
@@ -26,6 +27,8 @@ type TaskRow = typeof task.$inferSelect;
 export type QaRole = "reviewer" | "tester";
 
 export const QA_MAX_STEPS = 10;
+/** Wall clock for a reviewer / tester running on an external engine. */
+export const QA_WALL_MS = 15 * 60_000;
 const DIFF_CAP = 12_000;
 const OUT_TAIL = 6_000;
 
@@ -48,6 +51,7 @@ export function createQa(d: {
   runtime: Runtime;
   sandbox: Sandbox;
   objectStore: ObjectStore;
+  harness?: Harness;
 }) {
   const { db } = d;
   const obj = (props: Record<string, unknown>, required: string[] = []) => ({ type: "object", properties: props, required });
@@ -232,6 +236,23 @@ export function createQa(d: {
     },
   });
 
+  /** Whether this agent recorded a conclusion on this head since `since` (an engine concludes over MCP). */
+  async function concluded(taskId: string, role: QaRole, head: string, principalId: string, since: Date) {
+    const rows =
+      role === "reviewer"
+        ? await db.root
+            .select({ id: review.id })
+            .from(review)
+            .where(and(eq(review.taskId, taskId), eq(review.headSha, head), eq(review.reviewerPrincipalId, principalId), gte(review.createdAt, since)))
+        : await db.root
+            .select({ id: testRun.id })
+            .from(testRun)
+            .where(
+              and(eq(testRun.taskId, taskId), eq(testRun.headSha, head), eq(testRun.testerPrincipalId, principalId), inArray(testRun.status, ["passed", "failed"]), gte(testRun.createdAt, since)),
+            );
+    return rows.length > 0;
+  }
+
   /* ───────────── the turn ───────────── */
 
   async function turn(p: { tenantId: string; taskId: string; agentId: string; role: QaRole; headSha: string | null }, traceId: string) {
@@ -312,70 +333,101 @@ export function createQa(d: {
         content: `触发：${p.role === "reviewer" ? "评审" : "测试"} @${ws.headCommit.slice(0, 8)}`,
         contextPackage: { policy: { agentId: a.id, toolAllowlist: d.runtime.effectiveTools(a) }, state, layerTokens: { L1: estimateTokens(ctxText) } },
       });
-      const convo: ChatMsg[] = [];
-      const limit = a.budget.maxSteps ?? QA_MAX_STEPS;
       const conclude = p.role === "reviewer" ? "submit_review" : "submit_test_result";
-      let grace = 0; // one extra conclusion-only step when the forced conclusion is rejected by validation
-      for (;;) {
-        if (steps >= limit + grace) {
-          stopReason = "max_steps";
-          break;
-        }
-        const cur = (await db.root.select({ s: session.status }).from(session).where(eq(session.id, ses.id)))[0];
-        if (cur?.s !== "running") {
-          stopReason = "cancelled";
-          break;
-        }
-        // Thorough models keep reading until the budget runs out: the last step may only conclude.
-        const lastStep = steps >= limit - 1;
-        const tools = d.runtime.toolSpecs(a);
-        let res;
-        try {
-          res = await d.llm.complete(actx, {
-            purpose: p.role === "reviewer" ? "review.turn" : "test.turn",
-            promptVersion: p.role === "reviewer" ? QA_PROMPTS.review : QA_PROMPTS.test,
-            scope: { projectId: t.projectId, taskId: t.id, sessionId: ses.id, agentId: a.id },
-            messages: [
-              { role: "system", content: instructions },
-              { role: "user", content: ctxText },
-              ...convo,
-              ...(lastStep && convo.length ? [{ role: "user" as const, content: `这是本轮最后一步：不要再读取或检索，立即调用 ${conclude} 给出结论（依据已掌握的信息；信息不足就如实写明）。` }] : []),
-            ],
-            tools: lastStep ? tools.filter((x) => x.name === conclude) : tools,
-            modelPolicy: a.modelPolicy,
-            dataClasses: ["code", "task"],
-          });
-        } catch (e) {
-          stopReason = e instanceof BudgetExceeded ? "budget_exceeded" : e instanceof LlmUnavailable ? "llm_unavailable" : "llm_error";
-          await d.runtime.recordTurn(ses.id, { role: "error", content: (e as Error).message.slice(0, 500) });
-          break;
-        }
-        steps++;
-        tokens += res.tokensIn + res.tokensOut;
-        cost += res.cost;
-        const calls = res.toolCalls.slice(0, 2);
-        await d.runtime.recordTurn(ses.id, { role: "assistant", content: res.content, toolCalls: [{ mode: res.toolMode }, ...calls], tokensIn: res.tokensIn, tokensOut: res.tokensOut });
-        await d.runtime.heartbeat(ses.id);
-        if (!calls.length) {
-          stopReason = "model_done";
-          break;
-        }
-        const ided = calls.map((c, i) => ({ id: `call_${steps}_${i}`, name: c.name, arguments: c.arguments }));
-        convo.push({ role: "assistant", content: res.content, toolCalls: ided });
-        const answered = new Set<string>();
-        for (const [ci, call] of calls.entries()) {
-          const out = await d.runtime.invokeTool(actx, st, call as ParsedToolCall);
-          const text = JSON.stringify(out).slice(0, 12_000);
-          await d.runtime.recordTurn(ses.id, { role: "tool", content: text.slice(0, 4000), toolCalls: [call] });
-          convo.push({ role: "tool", toolCallId: ided[ci]!.id, name: call.name, content: text });
-          answered.add(ided[ci]!.id);
-          if (st.stop) break;
-        }
-        for (const c of ided) if (!answered.has(c.id)) convo.push({ role: "tool", toolCallId: c.id, name: c.name, content: '{"ok":false,"error":"未执行"}' });
-        if (lastStep && !st.stop && grace === 0 && calls.some((c) => c.name === conclude)) grace = 1;
-        if (st.stop) {
-          stopReason = st.stop;
-          break;
+      if (a.engine !== "builtin" && d.harness) {
+        // External engine (ADR-0010): it reads the checkout and concludes through the platform tool only.
+        const since = new Date();
+        const res = await d.harness.run({
+          agent: a,
+          sessionId: ses.id,
+          role: p.role,
+          cwd: dir,
+          taskId: t.id,
+          workspaceId: ws.id,
+          prompt: [
+            instructions,
+            ctxText,
+            [
+              "## 规则",
+              `- 当前目录是提交 ${ws.headCommit.slice(0, 8)} 的独立只读检出：只阅读${p.role === "tester" ? "和运行测试" : ""}，不要修改文件`,
+              p.role === "tester" ? `- 用平台工具 run_tests 运行测试（不填命令即 ${testCommand}），它的日志会作为证据附在结论上` : "- 需要完整改动时用平台工具 get_diff",
+              `- 结论只能通过平台工具 ${conclude} 提交，验收标准用方括号里的 id；提交后就结束`,
+            ].join("\n"),
+          ].join("\n\n"),
+          timeoutMs: a.budget.wallClockMs ?? QA_WALL_MS,
+          maxTurns: (a.budget.maxSteps ?? QA_MAX_STEPS) * 4,
+          scratch: st.scratch,
+        });
+        steps = 1;
+        if (await concluded(t.id, p.role, ws.headCommit, a.principalId, since)) stopReason = st.stop = p.role === "reviewer" ? "review_submitted" : "test_submitted";
+        else stopReason = res.ok ? "no_conclusion" : res.killed ? "harness_timeout" : "harness_failed";
+      } else {
+        const convo: ChatMsg[] = [];
+        const limit = a.budget.maxSteps ?? QA_MAX_STEPS;
+        let grace = 0; // one extra conclusion-only step when the forced conclusion is rejected by validation
+        for (;;) {
+          if (steps >= limit + grace) {
+            stopReason = "max_steps";
+            break;
+          }
+          const cur = (await db.root.select({ s: session.status }).from(session).where(eq(session.id, ses.id)))[0];
+          if (cur?.s !== "running") {
+            stopReason = "cancelled";
+            break;
+          }
+          // Thorough models keep reading until the budget runs out: the last step may only conclude.
+          const lastStep = steps >= limit - 1;
+          const tools = d.runtime.toolSpecs(a);
+          let res;
+          try {
+            res = await d.llm.complete(actx, {
+              purpose: p.role === "reviewer" ? "review.turn" : "test.turn",
+              promptVersion: p.role === "reviewer" ? QA_PROMPTS.review : QA_PROMPTS.test,
+              scope: { projectId: t.projectId, taskId: t.id, sessionId: ses.id, agentId: a.id },
+              messages: [
+                { role: "system", content: instructions },
+                { role: "user", content: ctxText },
+                ...convo,
+                ...(lastStep && convo.length
+                  ? [{ role: "user" as const, content: `这是本轮最后一步：不要再读取或检索，立即调用 ${conclude} 给出结论（依据已掌握的信息；信息不足就如实写明）。` }]
+                  : []),
+              ],
+              tools: lastStep ? tools.filter((x) => x.name === conclude) : tools,
+              modelPolicy: a.modelPolicy,
+              dataClasses: ["code", "task"],
+            });
+          } catch (e) {
+            stopReason = e instanceof BudgetExceeded ? "budget_exceeded" : e instanceof LlmUnavailable ? "llm_unavailable" : "llm_error";
+            await d.runtime.recordTurn(ses.id, { role: "error", content: (e as Error).message.slice(0, 500) });
+            break;
+          }
+          steps++;
+          tokens += res.tokensIn + res.tokensOut;
+          cost += res.cost;
+          const calls = res.toolCalls.slice(0, 2);
+          await d.runtime.recordTurn(ses.id, { role: "assistant", content: res.content, toolCalls: [{ mode: res.toolMode }, ...calls], tokensIn: res.tokensIn, tokensOut: res.tokensOut });
+          await d.runtime.heartbeat(ses.id);
+          if (!calls.length) {
+            stopReason = "model_done";
+            break;
+          }
+          const ided = calls.map((c, i) => ({ id: `call_${steps}_${i}`, name: c.name, arguments: c.arguments }));
+          convo.push({ role: "assistant", content: res.content, toolCalls: ided });
+          const answered = new Set<string>();
+          for (const [ci, call] of calls.entries()) {
+            const out = await d.runtime.invokeTool(actx, st, call as ParsedToolCall);
+            const text = JSON.stringify(out).slice(0, 12_000);
+            await d.runtime.recordTurn(ses.id, { role: "tool", content: text.slice(0, 4000), toolCalls: [call] });
+            convo.push({ role: "tool", toolCallId: ided[ci]!.id, name: call.name, content: text });
+            answered.add(ided[ci]!.id);
+            if (st.stop) break;
+          }
+          for (const c of ided) if (!answered.has(c.id)) convo.push({ role: "tool", toolCallId: c.id, name: c.name, content: '{"ok":false,"error":"未执行"}' });
+          if (lastStep && !st.stop && grace === 0 && calls.some((c) => c.name === conclude)) grace = 1;
+          if (st.stop) {
+            stopReason = st.stop;
+            break;
+          }
         }
       }
       if (!st.stop && stopReason !== "cancelled") {

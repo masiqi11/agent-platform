@@ -38,6 +38,32 @@ const listed = await mcp("tools/list");
 const names: string[] = (listed.result?.tools ?? []).map((t: { name: string }) => t.name);
 emit({ type: "message_end", message: { role: "assistant", content: [{ type: "text", text: `可用平台工具：${names.join(",")}` }] } });
 
+// Reviewer / tester: read, then conclude through the platform tool only (criteria ids from the prompt).
+const criteria = [...new Set([...prompt.matchAll(/- \[([a-z0-9_]+)\]/g)].map((m) => m[1]!))];
+if (names.includes("submit_review")) {
+  const diff = await tool("get_diff", {});
+  const ok = diff.text.includes("3_000");
+  await tool("submit_review", {
+    verdict: ok ? "approved" : "changes_requested",
+    summary: ok ? "超时改为 3_000，小于上游 5 秒，改动最小。" : "没有看到超时修复。",
+    criteria: Object.fromEntries(criteria.map((c) => [c, ok ? "met" : "unmet"])),
+    ...(ok ? {} : { comments: [{ path: "src/gateway.ts", body: "超时仍是 30_000" }] }),
+  });
+  emit({ type: "message_end", message: { role: "assistant", content: [{ type: "text", text: "评审已提交。" }], stopReason: "stop" } });
+  process.exit(0);
+}
+if (names.includes("submit_test_result")) {
+  const run = await tool("run_tests", {});
+  const passed = /"exitCode":0/.test(run.text);
+  await tool("submit_test_result", {
+    status: passed ? "passed" : "failed",
+    summary: passed ? "bun test 全部通过" : "测试失败",
+    criteriaResults: criteria.map((id) => ({ id, verdict: passed ? "met" : "unmet", evidence: "run_tests 日志" })),
+  });
+  emit({ type: "message_end", message: { role: "assistant", content: [{ type: "text", text: "测试结论已提交。" }], stopReason: "stop" } });
+  process.exit(0);
+}
+
 const task = await tool("get_task", {});
 // The harness tries to drive git itself: the platform refuses (not in the role's MCP tool set).
 await tool("commit", { message: "sneaky" });

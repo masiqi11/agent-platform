@@ -5,7 +5,7 @@ import { join } from "node:path";
 import { and, eq, sql } from "drizzle-orm";
 import { PAYMENTS_REPO } from "../src/cli/demo-repos";
 import type { Ctx } from "../src/core/context";
-import { agent, job, llmCall, session, sessionTurn, task, workspace } from "../src/db/schema";
+import { agent, job, llmCall, review, session, sessionTurn, task, testRun, workspace } from "../src/db/schema";
 import { git } from "../src/modules/scm/git";
 import { createTestApp, type TestApp } from "./helpers";
 
@@ -46,7 +46,7 @@ const turnsOf = async (taskId: string) => {
   const [ses] = await t.s.db.root
     .select()
     .from(session)
-    .where(and(eq(session.scopeType, "task"), eq(session.scopeId, taskId)));
+    .where(and(eq(session.scopeType, "task"), eq(session.scopeId, taskId), eq(session.agentId, devId)));
   return { ses: ses!, turns: await t.s.db.root.select().from(sessionTurn).where(eq(sessionTurn.sessionId, ses!.id)).orderBy(sessionTurn.idx) };
 };
 
@@ -74,6 +74,13 @@ beforeAll(async () => {
   expect(dev.status).toBe(200);
   expect(dev.body.engine).toBe("pi");
   devId = dev.body.id;
+  for (const [name, role] of [
+    ["评审 · 严审", "reviewer"],
+    ["测试 · 测测", "tester"],
+  ] as const) {
+    const r = await t.req("POST", `/api/v1/projects/${projectId}/agents`, { token: owner, body: { name, role, engine: "pi", modelPolicy: { primary: "relay-model" } } });
+    expect(r.status).toBe(200);
+  }
   const bound = await t.s.repos.bind(ownerCtx, projectId, { provider: "local", name: "payments", files: PAYMENTS_REPO, testCommand: "bun test" });
   repoUrl = bound.repo.url;
   const { registerHandlers } = await import("../src/modules/registry");
@@ -98,7 +105,8 @@ describe("H2 dev agent on an external engine (fake pi)", () => {
     const id = await newTask("排查支付服务超时");
     await settle();
     const [row] = await t.s.db.root.select().from(task).where(eq(task.id, id));
-    expect(row!.status).toBe("in_review");
+    // Dev, reviewer and tester all on the fake engine: the task waits for the human merge approval (S6 step 8).
+    expect(row!.status).toBe("testing");
     // The harness's closing summary becomes the change description / draft test plan.
     expect(row!.testPlan).toMatchObject({ draftBy: devId });
     expect(String((row!.testPlan as { summary?: string }).summary)).toContain("3_000");
@@ -126,6 +134,19 @@ describe("H2 dev agent on an external engine (fake pi)", () => {
     expect(upstreamSeen.at(-1)).toEqual({ auth: `Bearer ${UPSTREAM_KEY}`, model: "relay-model" });
     const calls = await t.s.db.root.select().from(llmCall).where(eq(llmCall.taskId, id));
     expect(calls.some((c) => c.purpose === "harness.dev" && c.tokensIn === 50)).toBe(true);
+
+    // Reviewer and tester concluded only through the platform tools, bound to the head commit (INV-08).
+    const [rv] = await t.s.db.root.select().from(review).where(eq(review.taskId, id));
+    expect(rv).toMatchObject({ verdict: "approved", headSha: ws!.headCommit, reviewerKind: "agent" });
+    expect(Object.values(rv!.criteriaVerdicts)).toEqual(["met", "met"]);
+    const [tr] = await t.s.db.root.select().from(testRun).where(eq(testRun.taskId, id));
+    expect(tr).toMatchObject({ status: "passed", headSha: ws!.headCommit });
+    expect(tr!.logArtifactId).toBeTruthy(); // the run_tests log over MCP is the evidence
+    const qa = await t.s.db.root
+      .select()
+      .from(session)
+      .where(and(eq(session.scopeType, "task"), eq(session.scopeId, id)));
+    expect(qa.map((x) => x.stopReason ?? "").sort((x, y) => x.localeCompare(y))).toEqual(["review_requested", "review_submitted", "test_submitted"]);
   });
 
   test("the harness changes nothing → the task is blocked with its explanation", async () => {

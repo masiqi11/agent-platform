@@ -1,0 +1,28 @@
+{
+  "engine": "pi",
+  "durationS": 120,
+  "status": "in_review",
+  "blockedReason": null,
+  "stopReason": "review_requested",
+  "mr": "!1",
+  "ci": {
+    "sha": "d01ef8b03e15e242413057400a802d0ce70ec719",
+    "status": "success",
+    "finishedAt": "2026-11-17T06:10:42.730Z",
+    "pipelineId": "lsp_01a1e8210d310000ymn9ngf"
+  },
+  "timeoutLine": "GATEWAY_CALL_TIMEOUT_MS = 3_000",
+  "summary": "已在任务上留言说明。改动仅涉及 `src/gateway.ts` 一处常量（30s → 3s），`bun test`全部通过，未做提交。",
+  "turns": 30,
+  "mcpCalls": [
+    "get_task",
+    "search_knowledge",
+    "add_task_comment"
+  ],
+  "llm": {
+    "calls": 10,
+    "failed": 0,
+    "tokensIn": 40799,
+    "tokensOut": 712
+  }
+}

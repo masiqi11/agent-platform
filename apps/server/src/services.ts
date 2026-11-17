@@ -90,7 +90,7 @@ export function createServices(config: Config, opts: ServiceOptions = {}) {
   const delivery = createDelivery({ config, db, audit, events, jobs, identity, repos, workspaces });
   const system = createSystem({ db, identity, sandbox, workspaces, jobs });
   const quality = createQuality({ db, audit, events, identity, tasks, approvals, repos });
-  const qa = createQa({ db, audit, events, jobs, identity, tasks, repos, workspaces, quality, llm, runtime, sandbox, objectStore });
+  const qa = createQa({ db, audit, events, jobs, identity, tasks, repos, workspaces, quality, llm, runtime, sandbox, objectStore, harness });
   const mergeQueue = createMergeQueue({ config, db, audit, events, jobs, identity, tasks, repos, workspaces, delivery, quality, inbox });
   quality.hooks.enqueueMerge = (ctx, t, sha) => mergeQueue.enqueue(ctx, t, sha);
   quality.hooks.dequeue = (ctx, taskId, reason) => mergeQueue.dequeue(ctx, taskId, reason);
