@@ -65,6 +65,7 @@ services:
 volumes:
   pgdata: {}
 secrets:
-  # Optional: CA of a TLS-inspecting proxy, used only while building (bun install). Empty by default.
+  # Optional: CA of a TLS-inspecting proxy, used only while building (bun install). The file must be
+  # inside deploy/ (compose refuses build secrets from elsewhere); the default is an empty file.
   build_ca:
-    file: ${BUILD_CA_FILE:-/dev/null}
+    file: ${BUILD_CA_FILE:-./build-ca.empty}

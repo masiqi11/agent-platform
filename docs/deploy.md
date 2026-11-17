@@ -91,7 +91,7 @@ sudo SANDBOX_NETWORK=ap-sandbox PORT=3000 deploy/sandbox-firewall.sh   # 只放�
 
 ## 4. 启动
 
-如果公司网络的代理会做 TLS 检查，构建时 `bun install` 会报 `SELF_SIGNED_CERT_IN_CHAIN`。这时在 `deploy/.env` 中设置 `BUILD_CA_FILE=<代理 CA 证书路径>`。证书只在构建时通过 BuildKit secret 使用，不会进入镜像。
+如果公司网络的代理会做 TLS 检查，构建时 `bun install` 会报 `SELF_SIGNED_CERT_IN_CHAIN`。这时把代理的 CA 证书（PEM 格式）复制为 `deploy/build-ca.pem`，并在 `deploy/.env` 中设置 `BUILD_CA_FILE=./build-ca.pem`。证书文件必须放在 `deploy/` 目录里，因为 compose 不允许从其它目录读取构建 secret。证书只在构建时通过 BuildKit secret 使用，不会进入镜像。
 
 ```bash
 cd deploy
