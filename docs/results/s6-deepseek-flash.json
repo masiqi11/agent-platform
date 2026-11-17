@@ -1,0 +1,107 @@
+{
+  "at": "2026-11-17T16:56:52.808Z",
+  "model": "deepseek-flash",
+  "engines": {
+    "dev": "builtin",
+    "reviewer": "builtin",
+    "tester": "builtin"
+  },
+  "endpoint": "api.deepseek.com",
+  "minutes": 1.9,
+  "steps": [
+    {
+      "step": "agents",
+      "ok": true,
+      "ms": 1055,
+      "note": "小码=builtin 审审=builtin 测测=builtin"
+    },
+    {
+      "step": "bind demo repo (bun test fails on main: the timeout bug)",
+      "ok": true,
+      "ms": 1125
+    },
+    {
+      "step": "task → in_progress",
+      "ok": true,
+      "ms": 16990
+    },
+    {
+      "step": "task → in_review",
+      "ok": true,
+      "ms": 27065
+    },
+    {
+      "step": "task → testing",
+      "ok": true,
+      "ms": 61038
+    },
+    {
+      "step": "task → done",
+      "ok": true,
+      "ms": 111983
+    },
+    {
+      "step": "merged by the queue",
+      "ok": true,
+      "ms": 111984,
+      "note": "merged "
+    },
+    {
+      "step": "fix on main",
+      "ok": true,
+      "ms": 112010,
+      "note": "+export const GATEWAY_CALL_TIMEOUT_MS = 3_000;"
+    },
+    {
+      "step": "reviews",
+      "ok": true,
+      "ms": 112018,
+      "note": "approved(0 条)"
+    },
+    {
+      "step": "test runs",
+      "ok": true,
+      "ms": 112018,
+      "note": "passed"
+    },
+    {
+      "step": "no dead jobs",
+      "ok": true,
+      "ms": 112019
+    }
+  ],
+  "calls": {
+    "total": 38,
+    "ok": 38,
+    "models": [
+      "deepseek-flash"
+    ],
+    "byPurpose": {
+      "dev.turn": {
+        "n": 15,
+        "ok": 15,
+        "avgMs": 1474,
+        "tokensOut": 1998
+      },
+      "review.turn": {
+        "n": 11,
+        "ok": 11,
+        "avgMs": 2868,
+        "tokensOut": 4549
+      },
+      "test.turn": {
+        "n": 10,
+        "ok": 10,
+        "avgMs": 2500,
+        "tokensOut": 3317
+      },
+      "kb.judge": {
+        "n": 2,
+        "ok": 2,
+        "avgMs": 2329,
+        "tokensOut": 654
+      }
+    }
+  },
+  "failures": []
+}
