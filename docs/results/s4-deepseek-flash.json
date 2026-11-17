@@ -1,0 +1,77 @@
+{
+  "ranAt": "2026-11-17T16:55:43.491Z",
+  "host": "DeepSeek 官方 API",
+  "steps": [
+    {
+      "step": "1 @船长 支付服务最近超时，帮我查一下 → 回复 + 追问",
+      "ms": 4750,
+      "pass": true,
+      "by": "model",
+      "detail": "回复=\"我先说明一下我的理解：王负责人反映支付服务最近出现超时，需要排查。知识库里暂时没有查到支付服务超时的相关记录，因此需要补充一些信息，才能判断影响范围并安排排查。\"；追问卡=\"关于支付服务超时，麻烦补充几点：1）大概从什么时间开始、持续多久？2）影响面（全部支付请求还是某个渠道/接口，比如微信/\""
+    },
+    {
+      "step": "2 补充细节 → 提议卡",
+      "ms": 4584,
+      "pass": true,
+      "by": "model",
+      "detail": "标题=\"排查 /pay/callback 微信支付回调超时（p99 > 5s，错误率 8%）\"；验收标准 4 条；优先级 P1"
+    },
+    {
+      "step": "3 确认提议 → 建任务并按策略分配",
+      "ms": 64,
+      "pass": true,
+      "by": "n/a",
+      "detail": "任务 P1 状态=backlog 负责=已发分配提议"
+    },
+    {
+      "step": "4 滚动摘要（/summary）",
+      "ms": 3461,
+      "pass": true,
+      "by": "model",
+      "detail": "v1 条目 9；决策 2；模型=deepseek-flash"
+    },
+    {
+      "step": "5 问全局船长（相关）",
+      "ms": 2040,
+      "pass": true,
+      "by": "model",
+      "detail": "\"材料显示已确认的处理方案是：回调统一走异步队列，3 秒内先返回 200；同时已确认任务 PAY-1，排查 /pay/callback 微信回调超时（p99>5s\" 来源=PAY"
+    },
+    {
+      "step": "6 问全局船长（无依据）→ 未检索到依据",
+      "ms": 9,
+      "pass": true,
+      "by": "n/a",
+      "detail": "未检索到依据"
+    }
+  ],
+  "stat": {
+    "model": "deepseek-flash",
+    "endpoint": "api.deepseek.com",
+    "calls": 5,
+    "ok": 5,
+    "errors": 0,
+    "avgLatencyMs": 2788,
+    "tokensPerSec": 144.1,
+    "toolModes": {
+      "native": 3,
+      "none": 2
+    },
+    "repaired": 0,
+    "rejectedTools": [],
+    "failures": [],
+    "byPurpose": {
+      "captain.turn": [
+        2344,
+        2055,
+        4350
+      ],
+      "captain.summary": [
+        3170
+      ],
+      "global.ask": [
+        2019
+      ]
+    }
+  }
+}
