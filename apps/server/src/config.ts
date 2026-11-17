@@ -30,7 +30,7 @@ export interface Config {
   currentKeyVersion: number;
   s3: { endpoint: string; region: string; bucket: string; accessKey: string; secretKey: string } | null;
   maxUploadMb: number;
-  sandbox: { kind: "process" | "docker"; image?: string; runtime?: string; timeoutMs: number };
+  sandbox: { kind: "process" | "docker"; image?: string; runtime?: string; timeoutMs: number; network?: string; platformUrl?: string; platformPort: number; imageAllow?: string[] };
   /** External harness engines (ADR-0010). */
   harness: { platformUrl: string; bins: Partial<Record<"claude-code" | "codex" | "opencode" | "pi", string>>; passEnv: Record<string, string>; cacheDir: string };
   llmBootstrap: { baseUrl: string; apiKey?: string; model: string; embeddingModel?: string; apis?: Array<"chat" | "responses" | "messages"> } | null;
@@ -96,7 +96,18 @@ export function createConfig(env: Env, cwd = process.cwd()): Config {
         ? { endpoint: env.S3_ENDPOINT, region: env.S3_REGION ?? "us-east-1", bucket: env.S3_BUCKET, accessKey: env.S3_ACCESS_KEY, secretKey: env.S3_SECRET_KEY }
         : null,
     maxUploadMb: env.MAX_UPLOAD_MB,
-    sandbox: { kind: env.SANDBOX ?? (isProd ? "docker" : "process"), image: env.SANDBOX_IMAGE, runtime: env.SANDBOX_RUNTIME, timeoutMs: env.SANDBOX_TIMEOUT_MS },
+    sandbox: {
+      kind: env.SANDBOX ?? (isProd ? "docker" : "process"),
+      image: env.SANDBOX_IMAGE,
+      runtime: env.SANDBOX_RUNTIME,
+      timeoutMs: env.SANDBOX_TIMEOUT_MS,
+      network: env.SANDBOX_NETWORK,
+      platformUrl: env.HARNESS_SANDBOX_PLATFORM_URL,
+      platformPort: env.PORT,
+      imageAllow: env.SANDBOX_IMAGE_ALLOW?.split(",")
+        .map((x) => x.trim())
+        .filter(Boolean),
+    },
     harness: {
       platformUrl: env.HARNESS_PLATFORM_URL ?? `http://127.0.0.1:${env.PORT}`,
       bins: Object.fromEntries(

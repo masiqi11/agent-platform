@@ -77,6 +77,16 @@ const res = await fetch(`${models.baseUrl}/chat/completions`, {
 const answer = res.ok ? (((await res.json()) as any).choices?.[0]?.message?.content ?? "") : `模型代理返回 ${res.status}`;
 emit({ type: "message_end", message: { role: "assistant", content: [{ type: "text", text: answer }], usage: { input: 10, output: 5 } } });
 
+// `[fake:probe]`: report whether anything beyond the platform is reachable from where the harness runs.
+let probe = "";
+if (prompt.includes("[fake:probe]")) {
+  const outside = await fetch("http://1.1.1.1/", { signal: AbortSignal.timeout(3000) }).then(
+    () => "reachable",
+    () => "blocked",
+  );
+  probe = `外网探测：${outside}`;
+}
+
 if (prompt.includes("[fake:block]")) {
   await tool("block_task", { reason: "需求里的超时上限和网关文档矛盾，需要确认", needs: "产品负责人" });
   emit({ type: "message_end", message: { role: "assistant", content: [{ type: "text", text: "已阻塞，等待确认。" }] } });
@@ -90,5 +100,9 @@ if (!prompt.includes("[fake:noop]")) {
 }
 emit({
   type: "message_end",
-  message: { role: "assistant", content: [{ type: "text", text: `已把网关调用超时改为 3_000，小于上游网关超时；bun test 全部通过。（任务信息长度 ${task.text.length}）` }], stopReason: "stop" },
+  message: {
+    role: "assistant",
+    content: [{ type: "text", text: `已把网关调用超时改为 3_000，小于上游网关超时；bun test 全部通过。（任务信息长度 ${task.text.length}）${probe}` }],
+    stopReason: "stop",
+  },
 });

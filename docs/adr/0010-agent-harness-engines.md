@@ -62,7 +62,7 @@
 ### 实现中的发现
 
 6. **中转站的流式并行工具调用会打乱参数**（与 ADR-0009 #2 同源）：真实 pi 第一次跑开发流程时，74 轮中有 21 轮是参数损坏的工具调用；部分分片既无 id、又共用 index，无法在代理端还原。现在 Chat 接口的流式请求由代理以非流式取回，再按调用逐个生成流返回给引擎；修复后 0 损坏。
-7. **docker 沙箱暂不支持外部引擎**：引擎需要访问平台的模型代理和 MCP，而 docker 沙箱目前没有网络（出口白名单在 S8）。外部引擎目前要求 process 沙箱，生产部署前需要补上 S8。
+7. **docker 沙箱**（S8 已支持）：配置 `SANDBOX_NETWORK` 后，外部引擎的容器加入一个 internal 网络，只能访问平台（模型代理 + MCP）；宿主机其它端口由 `deploy/sandbox-firewall.sh` 关闭，没关时系统状态页会提示。容器里 HOME 为 `/workspace/.sandbox-home`，引擎需要预装在沙箱镜像里。见 `docs/security/sandbox-isolation-review.md`。
 8. **HOME 曾可能被提交**：`git add -A` 会把引擎的配置和缓存一起提交。现在每个工作区和检出都把 `.sandbox-home/` 写入 `.git/info/exclude`，并有回归测试。
 
 ### 验证

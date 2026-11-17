@@ -61,7 +61,7 @@ export function createSystem(d: {
       },
       jobs: { queued: jobs.queued ?? 0, running: jobs.running ?? 0, dead: jobs.dead ?? 0 },
       deadLetters: dl?.n ?? 0,
-      sandbox: { kind: d.sandbox.kind, ok: sb.ok, detail: sb.detail },
+      sandbox: { kind: d.sandbox.kind, ok: sb.ok, detail: sb.detail, warning: sb.warning ?? null },
       providers: providers.map((p) => ({ name: p.name, kind: p.kind, status: p.status, circuit: p.circuit.state })),
       disk,
       checkedAt: new Date().toISOString(),

@@ -30,6 +30,11 @@ export interface ExecRequest {
   image?: string;
   /** Egress allowlist (SBX-03). Empty = no network. */
   egress?: string[];
+  /**
+   * "platform": the run may reach the platform (model proxy + MCP) and nothing else — external
+   * engines (ADR-0010). Default "none": no network at all.
+   */
+  network?: "none" | "platform";
   limits?: { memoryMb?: number; cpus?: number; pids?: number };
 }
 
@@ -50,7 +55,12 @@ export interface ExecResult {
 
 export interface Sandbox {
   kind: "process" | "docker";
-  available(): Promise<{ ok: boolean; detail: string }>;
+  /** `warning`: runs, but isolation is weaker than intended (e.g. host ports visible to containers). */
+  available(): Promise<{ ok: boolean; detail: string; warning?: string }>;
+  /** HOME inside the sandbox for a workspace (harness config files go there). */
+  homeFor(cwd: string): string;
+  /** Platform base URL reachable from `network: "platform"` runs; null when that isn't set up. */
+  platformUrl(): Promise<string | null>;
   exec(req: ExecRequest): Promise<ExecResult>;
   /** Removes leftover containers (SBX-10). Returns how many were removed. */
   sweep(): Promise<number>;
@@ -144,6 +154,9 @@ export function createProcessSandbox(defaultTimeoutMs: number): Sandbox {
     async available() {
       return { ok: true, detail: "process（仅开发；无网络隔离与资源限额）" };
     },
+    homeFor: (cwd) => join(cwd, ".sandbox-home"),
+    // A process shares the host network: the platform is wherever the harness config says.
+    platformUrl: async () => null,
     async exec(req) {
       const home = join(req.cwd, ".sandbox-home");
       const r = await run(["sh", "-c", req.cmd], { cwd: req.cwd, env: { ...sandboxEnv(home, req.env), ...req.sessionEnv }, timeoutMs: req.timeoutMs ?? defaultTimeoutMs, onStdout: req.onStdout });
@@ -163,8 +176,80 @@ const NOBODY = "65532:65532";
  * dropped, no-new-privileges, pid/memory/cpu limits, no docker socket, no privileged mode, optional
  * gVisor runtime, network off unless the project allowlists egress.
  */
-export function createDockerSandbox(cfg: { image?: string; runtime?: string; timeoutMs: number; dockerBin?: string }): Sandbox {
+export function createDockerSandbox(cfg: {
+  image?: string;
+  runtime?: string;
+  timeoutMs: number;
+  dockerBin?: string;
+  network?: string;
+  platformUrl?: string;
+  platformPort?: number;
+  /** SBX-09: allowed image prefixes; unset = any image. */
+  imageAllow?: string[];
+}): Sandbox {
   const docker = cfg.dockerBin ?? "docker";
+  const dk = (args: string[], timeoutMs = 30_000) => run([docker, ...args], { cwd: "/", env: { PATH: process.env.PATH ?? "" }, timeoutMs });
+  let net: Promise<{ name: string; gateway: string } | null> | null = null;
+  /** The platform network: internal (no route out), created on first use. */
+  function platformNet() {
+    if (!cfg.network) return Promise.resolve(null);
+    net ??= (async () => {
+      const name = cfg.network!;
+      let r = await dk(["network", "inspect", "--format", "{{.Internal}} {{(index .IPAM.Config 0).Gateway}}", name]);
+      if (r.code !== 0) {
+        const c = await dk(["network", "create", "--internal", "--label", "ap.sandbox=1", name]);
+        if (c.code !== 0) throw new Error(`无法创建沙箱网络 ${name}：${c.stderr.trim().slice(0, 200)}`);
+        r = await dk(["network", "inspect", "--format", "{{.Internal}} {{(index .IPAM.Config 0).Gateway}}", name]);
+      }
+      const [internal, gateway] = r.stdout.trim().split(" ");
+      // An existing network that routes outside would silently widen egress: refuse it.
+      if (internal !== "true") throw new Error(`沙箱网络 ${name} 不是 internal 网络：请删除后让平台重建，或用 docker network create --internal 创建`);
+      return { name, gateway: gateway ?? "" };
+    })().catch((e) => {
+      net = null;
+      throw e;
+    });
+    return net;
+  }
+  /**
+   * Whether a container on the platform network can reach a host port other than the platform's:
+   * an internal network still reaches the host itself, so without a host firewall every service
+   * listening on 0.0.0.0 (a database…) is visible to sandboxes.
+   */
+  async function hostLeak(n: { name: string; gateway: string }, image: string): Promise<boolean> {
+    const canary = Bun.listen({
+      hostname: "0.0.0.0",
+      port: 0,
+      socket: {
+        data() {},
+        open(s) {
+          s.end();
+        },
+      },
+    });
+    try {
+      const r = await dk(
+        [
+          "run",
+          "--rm",
+          "--network",
+          n.name,
+          "--cap-drop",
+          "ALL",
+          "--user",
+          NOBODY,
+          image,
+          "sh",
+          "-c",
+          `(echo > /dev/tcp/${n.gateway}/${canary.port}) 2>/dev/null || nc -z -w 2 ${n.gateway} ${canary.port}`,
+        ],
+        30_000,
+      );
+      return r.code === 0;
+    } finally {
+      canary.stop(true);
+    }
+  }
   const digests = new Map<string, string>();
   async function digestOf(image: string) {
     if (digests.has(image)) return digests.get(image)!;
@@ -196,18 +281,40 @@ export function createDockerSandbox(cfg: { image?: string; runtime?: string; tim
       if (r.code !== 0) return { ok: false, detail: `docker 不可用：${(r.stderr || r.stdout).trim().slice(0, 200)}` };
       const image = cfg.image ?? "";
       const d = image ? await digestOf(image) : "";
-      return { ok: Boolean(d) || !image, detail: `docker ${r.stdout.trim()}${image ? `，镜像 ${image}${d ? "" : "（未拉取）"}` : ""}` };
+      const base = `docker ${r.stdout.trim()}${image ? `，镜像 ${image}${d ? "" : "（未拉取）"}` : ""}`;
+      if (!cfg.network) return { ok: Boolean(d) || !image, detail: base };
+      try {
+        const n = (await platformNet())!;
+        const leak = image && d ? await hostLeak(n, image) : false;
+        return {
+          ok: Boolean(d) || !image,
+          detail: `${base}，平台网络 ${n.name}（${n.gateway}）`,
+          ...(leak ? { warning: `沙箱可以访问宿主机上平台以外的端口：请运行 deploy/sandbox-firewall.sh（见部署文档）` } : {}),
+        };
+      } catch (e) {
+        return { ok: false, detail: `${base}；${(e as Error).message}` };
+      }
+    },
+    homeFor: () => "/workspace/.sandbox-home",
+    async platformUrl() {
+      if (cfg.platformUrl) return cfg.platformUrl;
+      const n = await platformNet();
+      return n ? `http://${n.gateway}:${cfg.platformPort ?? 3000}` : null;
     },
     async exec(req) {
       const image = req.image ?? cfg.image;
       if (!image) throw new Error("docker 沙箱未配置镜像（SANDBOX_IMAGE 或仓库设置）");
+      if (cfg.imageAllow?.length && !cfg.imageAllow.some((p) => image.startsWith(p))) throw new Error(`沙箱镜像 ${image} 不在允许的来源内（SANDBOX_IMAGE_ALLOW）`);
       const uid = typeof process.getuid === "function" ? process.getuid() : 0;
       const user = uid === 0 ? NOBODY : `${uid}:${process.getgid?.() ?? uid}`;
       if (uid === 0) await makeWritable(req.cwd);
       const name = `ap-sbx-${newId("x").slice(2, 18).toLowerCase()}`;
       const l = req.limits ?? {};
-      const env = { ...sandboxEnv("/tmp", req.env, "/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"), ...req.sessionEnv };
-      if (req.egress?.length) log.warn("sandbox.egress_not_enforced", { note: "allowlist recorded; container still runs with network none" });
+      // HOME on the workspace mount (same layout as the process sandbox), so harness configs written there are found.
+      const env = { ...sandboxEnv("/workspace/.sandbox-home", req.env, "/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"), ...req.sessionEnv };
+      if (req.egress?.length) log.warn("sandbox.egress_not_enforced", { note: "allowlist recorded; only the platform network is supported (dependencies belong in the image)" });
+      const network = req.network === "platform" ? (await platformNet())?.name : undefined;
+      if (req.network === "platform" && !network) throw new Error("需要平台网络的运行：请配置 SANDBOX_NETWORK");
       const argv = [
         docker,
         "run",
@@ -217,7 +324,7 @@ export function createDockerSandbox(cfg: { image?: string; runtime?: string; tim
         "--label",
         "ap.sandbox=1",
         "--network",
-        "none",
+        network ?? "none",
         "--read-only",
         "--tmpfs",
         "/tmp:rw,exec,size=256m",

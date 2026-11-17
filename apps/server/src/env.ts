@@ -50,6 +50,15 @@ export const serverSchema = {
   SANDBOX_IMAGE: z.string().optional(),
   SANDBOX_RUNTIME: z.string().optional(),
   SANDBOX_TIMEOUT_MS: z.coerce.number().int().default(600000),
+  /** SBX-09: comma-separated image prefixes the docker sandbox may run (e.g. "registry.internal/,mirror.gcr.io/oven/"). */
+  SANDBOX_IMAGE_ALLOW: z.string().optional(),
+  /** Internal docker network whose only reachable host is the platform (external engines, ADR-0010). */
+  SANDBOX_NETWORK: z
+    .string()
+    .regex(/^[a-zA-Z0-9][a-zA-Z0-9_.-]*$/)
+    .optional(),
+  /** Platform URL as seen from that network (default: http://<network gateway>:PORT). */
+  HARNESS_SANDBOX_PLATFORM_URL: z.string().url().optional(),
   LLM_BASE_URL: z.string().optional(),
   LLM_API_KEY: z.string().optional(),
   LLM_MODEL: z.string().optional(),
