@@ -1,11 +1,11 @@
 # 多 Agent 多人协作开发平台
 
 人和 AI Agent 在同一个项目群里协作：讨论需求 → 船长 Agent 提议任务 → 开发 / 评审 / 测试 Agent 执行 → 人审批合并，全程可审计。
-设计与需求见 [`docs/DEV-SPEC-v0.3.md`](docs/DEV-SPEC-v0.3.md)，进度见 [`docs/PROGRESS.md`](docs/PROGRESS.md)。
+设计与需求见 [`docs/DEV-SPEC-v0.3.md`](docs/DEV-SPEC-v0.3.md)，进度见 [`docs/PROGRESS.md`](docs/PROGRESS.md)，后续演进与验收计划见 [`docs/ROADMAP.md`](docs/ROADMAP.md)。
 
 ## 当前状态
 
-已完成阶段 S0–S5（身份/内核、项目群聊、任务看板审批收件箱、模型层与船长、代码执行链路）与 S6（评审、测试、门禁、合并队列：主场景十步在脚本模型 + 本地仓库下全自动通过，第 4–8 步已在真实 GitLab CE + Runner 上通过）；S7 知识库主体已完成（代码/文档/决策索引、三路混合检索、带引用的项目船长与全局船长跨项目问答；30 题评测 `bun run kb:eval`）；S8–S9（生产化、钉钉）尚未开始。详见 `docs/PROGRESS.md`。
+已完成阶段 S0–S5（身份/内核、项目群聊、任务看板审批收件箱、模型层与船长、代码执行链路）与 S6（评审、测试、门禁、合并队列：主场景十步在脚本模型 + 本地仓库下全自动通过，第 4–8 步已在真实 GitLab CE + Runner 上通过）；S7 知识库主体已完成（代码/文档/决策索引、三路混合检索、带引用的项目船长与全局船长跨项目问答；30 题评测 `bun run kb:eval`）；S8 生产化已有实现，尚待安全、并发与部署准出闭环；S9 钉钉未开始。当前本地实测阻断与四阶段计划见 `docs/ROADMAP.md`。详见 `docs/PROGRESS.md`。
 
 ## 技术栈
 
