@@ -31,6 +31,7 @@ export function createStreamHolder(o: {
   let wake: (() => void) | null = null;
   const sleep = (ms: number) =>
     new Promise<void>((r) => {
+      if (stopped) return r();
       const t = setTimeout(r, ms);
       wake = () => {
         clearTimeout(t);
@@ -39,7 +40,9 @@ export function createStreamHolder(o: {
     });
 
   async function acquire(): Promise<boolean> {
-    const c = new pg.Client({ connectionString: o.databaseUrl });
+    // Bounded connect: stop() waits for an in-flight acquire() to settle rather than cutting it
+    // (pg's end() during connect never resolves), then that acquire releases what it got (#15).
+    const c = new pg.Client({ connectionString: o.databaseUrl, connectionTimeoutMillis: 10_000 });
     c.on("error", (e) => {
       // Connection lost → lock lost: stop streaming at once; the loop tries to re-acquire.
       log.warn("im.stream.lease_lost", { name: o.name, err: e.message.slice(0, 200) });
@@ -50,18 +53,37 @@ export function createStreamHolder(o: {
     try {
       await c.connect();
       const r = await c.query<{ ok: boolean }>("select pg_try_advisory_lock(hashtext($1)) as ok", [`ap:im-stream:${o.name}`]);
-      if (r.rows[0]?.ok) {
+      // stop() may have been called while connecting: never start a session after it (#15).
+      if (r.rows[0]?.ok && !stopped) {
         client = c;
         return true;
       }
     } catch (e) {
-      st.lastError = (e as Error).message.slice(0, 200);
+      if (!stopped) st.lastError = (e as Error).message.slice(0, 200);
     }
+    // Ending the connection releases a lock we may just have taken.
     await c.end().catch(() => undefined);
     return false;
   }
 
+  async function release() {
+    const c = client;
+    client = null;
+    st.holder = false;
+    st.connected = false;
+    await c?.end().catch(() => undefined);
+  }
+
   async function loop() {
+    try {
+      await sessions();
+    } finally {
+      // Whatever way the loop ends, the lease goes with it so another instance can take over.
+      await release();
+    }
+  }
+
+  async function sessions() {
     let backoff = 1_000;
     while (!stopped) {
       if (!client) {
@@ -70,6 +92,7 @@ export function createStreamHolder(o: {
           await sleep(retryMs);
           continue;
         }
+        if (stopped) break;
         st.holder = true;
         log.info("im.stream.lease_acquired", { name: o.name });
       }
@@ -107,11 +130,8 @@ export function createStreamHolder(o: {
       stopped = true;
       session?.abort();
       wake?.();
-      const c = client;
-      client = null;
-      await c?.end().catch(() => undefined);
       await running?.catch(() => undefined);
-      st.holder = false;
+      await release();
     },
     touch() {
       st.lastEventAt = new Date().toISOString();

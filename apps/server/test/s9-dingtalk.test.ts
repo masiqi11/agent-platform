@@ -227,4 +227,54 @@ describe("S9 DingTalk — the Stream is held by one instance (lease)", () => {
       await db.drop();
     }
   });
+
+  test("#15: stop() while the lease connection is still being opened never starts a session", async () => {
+    const db = await createTestDatabase("s9lease2");
+    const running: string[] = [];
+    const mk = (who: string) =>
+      createStreamHolder({
+        databaseUrl: db.url,
+        name: "dingtalk",
+        retryMs: 100,
+        run: async (signal, onState) => {
+          running.push(who);
+          onState({ connected: true });
+          await new Promise<void>((r) => signal.addEventListener("abort", () => r(), { once: true }));
+        },
+      });
+    const a = mk("a");
+    const b = mk("b");
+    try {
+      a.start();
+      // Same tick: acquire() is still connecting.
+      const stopped = await Promise.race([a.stop().then(() => "stopped"), Bun.sleep(3_000).then(() => "hung")]);
+      expect(stopped).toBe("stopped");
+      await Bun.sleep(300);
+      expect(running).toEqual([]);
+      expect(a.status().holder).toBe(false);
+      // The lock is free: a second instance takes over on its first attempt.
+      b.start();
+      for (let i = 0; i < 50 && !b.status().holder; i++) await Bun.sleep(20);
+      expect(b.status()).toMatchObject({ holder: true, connected: true });
+      expect(running).toEqual(["b"]);
+      // And stopping right after acquisition, repeatedly, never leaks a session or the lock.
+      for (let i = 0; i < 5; i++) {
+        const c = mk(`c${i}`);
+        c.start();
+        await Bun.sleep(i * 3);
+        await c.stop();
+      }
+      await b.stop();
+      const d = mk("d");
+      d.start();
+      for (let i = 0; i < 50 && !d.status().holder; i++) await Bun.sleep(20);
+      expect(d.status().holder).toBe(true);
+      await d.stop();
+      expect(running.filter((x) => x.startsWith("c"))).toEqual([]);
+    } finally {
+      await a.stop();
+      await b.stop();
+      await db.drop();
+    }
+  }, 20_000);
 });
