@@ -1,6 +1,6 @@
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
-import { and, eq } from "drizzle-orm";
-import { agent, appUser, attachment, binding, deadLetter, externalIdentity, inboxItem, job, message, outboundDelivery, principal, proposal, question, task } from "../src/db/schema";
+import { and, eq, inArray, sql } from "drizzle-orm";
+import { agent, appUser, attachment, binding, deadLetter, event, externalIdentity, inboxItem, job, message, outboundDelivery, principal, proposal, question, task } from "../src/db/schema";
 import { createMockImAdapter } from "../src/modules/im/mock";
 import { degradeMarkdown, renderForIm, truncateWithLink } from "../src/modules/im/render";
 import { quietUntil } from "../src/modules/im/service";
@@ -379,6 +379,72 @@ describe("S9 IM — outbound delivery (FR-IM-04, -08; IM-补3, -8)", () => {
     const [after] = await t.s.db.root.select().from(outboundDelivery).where(eq(outboundDelivery.id, o!.id));
     expect(after!.status).toBe("sent");
     expect(im.sent.at(-1)?.msg.markdown).toContain("会失败的通知");
+  });
+
+  test("#16: delivery row and job are atomic; a replay heals a pending row with no job; concurrent and delivered replays add nothing", async () => {
+    im.reset();
+    const deliverJobs = async (ids: string[]) =>
+      ids.length
+        ? (
+            await t.s.db.root
+              .select()
+              .from(job)
+              .where(
+                inArray(
+                  job.dedupeKey,
+                  ids.map((id) => `im.deliver:${id}`),
+                ),
+              )
+          ).length
+        : 0;
+    // Hold the consumer back so the event can be handed to it by hand.
+    const { message: m } = await sysNotice("入队中断的通知");
+    const [ev] = await t.s.db.root
+      .select()
+      .from(event)
+      .where(and(eq(event.type, "message.created"), sql`${event.payload}->>'messageId' = ${m.id}`));
+    const domainEvent = { ...ev!, occurredAt: ev!.occurredAt.toISOString() } as unknown as Parameters<typeof t.s.im.consumer.handle>[0];
+    const forMsg = () => t.s.db.root.select().from(outboundDelivery).where(eq(outboundDelivery.messageId, m.id));
+
+    // 1. enqueue fails mid-way: nothing is left behind (no pending row without a job).
+    const real = t.s.jobs.enqueue;
+    t.s.jobs.enqueue = (async () => {
+      throw new Error("simulated crash between row and job");
+    }) as typeof real;
+    try {
+      await expect(t.s.im.consumer.handle(domainEvent)).rejects.toThrow("simulated crash");
+    } finally {
+      t.s.jobs.enqueue = real;
+    }
+    expect(await forMsg()).toHaveLength(0);
+
+    // 2. A row left pending without a job (as an older version could leave it) is healed by the replay.
+    await t.s.im.consumer.handle(domainEvent);
+    const [row] = await forMsg();
+    expect(row!.status).toBe("pending");
+    await t.s.db.root.delete(job).where(eq(job.dedupeKey, `im.deliver:${row!.id}`));
+    expect(await deliverJobs([row!.id])).toBe(0);
+    await t.s.im.consumer.handle(domainEvent);
+    expect(await deliverJobs([row!.id])).toBe(1);
+
+    // 3. Concurrent replays: still one row and one queued job.
+    await Promise.all([t.s.im.consumer.handle(domainEvent), t.s.im.consumer.handle(domainEvent), t.s.im.consumer.handle(domainEvent)]);
+    expect(await forMsg()).toHaveLength(1);
+    expect(await deliverJobs([row!.id])).toBe(1);
+
+    // 4. Once delivered, a replay enqueues nothing and sends nothing again.
+    await cycle(1);
+    expect((await forMsg())[0]!.status).toBe("sent");
+    expect(im.sent.filter((x) => x.msg.markdown.includes("入队中断的通知"))).toHaveLength(1);
+    await t.s.im.consumer.handle(domainEvent);
+    await cycle(1);
+    expect(im.sent.filter((x) => x.msg.markdown.includes("入队中断的通知"))).toHaveLength(1);
+    expect(
+      await t.s.db.root
+        .select()
+        .from(job)
+        .where(and(eq(job.dedupeKey, `im.deliver:${row!.id}`), inArray(job.status, ["queued", "running"]))),
+    ).toHaveLength(0);
   });
 
   test("provider throttling waits without spending attempts", async () => {
