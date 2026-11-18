@@ -297,9 +297,13 @@ describe("#8 job execution rights: lease renewal, fencing, timeout", () => {
       30,
     );
     await w.enqueue("slow", {}, { maxAttempts: 3 });
-    const t0 = Date.now();
     const [j] = await w.claim(1);
+    // Measured from the start of the run, not before the claim: the claim's own latency (a cold
+    // CI database) is not part of the timeout. The bound is the handler's 160 ms: abort must come
+    // well before the handler would have finished.
+    const t0 = Date.now();
     await w.runJob(j!);
+    expect(abortedAt).toBeGreaterThan(0);
     expect(abortedAt - t0).toBeLessThan(150);
     const [row] = await db.root.select().from(job).where(eq(job.id, j!.id));
     expect(row!.status).toBe("queued"); // retried later, attempt counted

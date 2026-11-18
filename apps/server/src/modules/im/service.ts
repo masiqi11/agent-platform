@@ -827,16 +827,30 @@ export function createIm(d: ImDeps, adapters: ImAdapter[] = []) {
     return rows.filter((b) => registry.has(b.provider));
   }
 
+  /**
+   * The delivery row and its job are written in one transaction (#16), so a crash between them
+   * cannot leave a pending row without a job. A replayed event that finds the row still pending
+   * re-enqueues it (deduped while queued/running), which also heals rows left by older versions.
+   */
   async function enqueueDelivery(tenantId: string, b: BindingRow, refId: string, traceId: string, status: "pending" | "skipped" = "pending", note?: string) {
-    const id = newId("obd");
-    const [row] = await db.root
-      .insert(outboundDelivery)
-      .values({ id, tenantId, bindingId: b.id, messageId: refId, status, lastError: note ?? null })
-      .onConflictDoNothing()
-      .returning({ id: outboundDelivery.id });
-    if (row && status === "pending")
-      await d.jobs.enqueue("im.deliver", { deliveryId: id }, { tenantId, dedupeKey: `im.deliver:${id}`, concurrencyKey: `im:out:${b.id}`, maxAttempts: DELIVER_ATTEMPTS, traceId });
-    return row?.id ?? null;
+    return db.tx(async (q) => {
+      const [row] = await q
+        .insert(outboundDelivery)
+        .values({ id: newId("obd"), tenantId, bindingId: b.id, messageId: refId, status, lastError: note ?? null })
+        .onConflictDoNothing()
+        .returning({ id: outboundDelivery.id, status: outboundDelivery.status });
+      const target =
+        row ??
+        (
+          await q
+            .select({ id: outboundDelivery.id, status: outboundDelivery.status })
+            .from(outboundDelivery)
+            .where(and(eq(outboundDelivery.bindingId, b.id), eq(outboundDelivery.messageId, refId)))
+        )[0];
+      if (target?.status === "pending")
+        await d.jobs.enqueue("im.deliver", { deliveryId: target.id }, { tenantId, dedupeKey: `im.deliver:${target.id}`, concurrencyKey: `im:out:${b.id}`, maxAttempts: DELIVER_ATTEMPTS, traceId });
+      return row?.id ?? null;
+    });
   }
 
   /** Which platform messages are mirrored: Agent replies, cards, notices; not what came from IM. */

@@ -155,9 +155,10 @@ export function createDingTalkAdapter(o: DingTalkOptions) {
   };
 
   /** Opens a Stream connection endpoint (gateway → ticket). */
-  async function openConnection(): Promise<{ endpoint: string; ticket: string }> {
+  async function openConnection(signal?: AbortSignal): Promise<{ endpoint: string; ticket: string }> {
     const r = await f(`${API}/v1.0/gateway/connections/open`, {
       method: "POST",
+      signal,
       headers: { "content-type": "application/json", accept: "application/json" },
       body: JSON.stringify({
         clientId: o.clientId,
@@ -180,8 +181,17 @@ export function createDingTalkAdapter(o: DingTalkOptions) {
    * and redelivery is harmless (FR-IM-07).
    */
   async function runStream(onEvent: (ev: ImInbound) => Promise<void>, signal: AbortSignal, onState?: (s: { connected: boolean; error?: string }) => void): Promise<void> {
-    const { endpoint, ticket } = await openConnection();
-    const ws = new WebSocket(`${endpoint}?ticket=${encodeURIComponent(ticket)}`);
+    // Stopped while asking for a ticket (#15): the fetch is aborted, and no socket is opened.
+    if (signal.aborted) return;
+    let conn: { endpoint: string; ticket: string };
+    try {
+      conn = await openConnection(signal);
+    } catch (e) {
+      if (signal.aborted) return;
+      throw e;
+    }
+    if (signal.aborted) return;
+    const ws = new WebSocket(`${conn.endpoint}?ticket=${encodeURIComponent(conn.ticket)}`);
     await new Promise<void>((resolve) => {
       const close = () => {
         try {
@@ -191,6 +201,7 @@ export function createDingTalkAdapter(o: DingTalkOptions) {
         }
       };
       signal.addEventListener("abort", close, { once: true });
+      if (signal.aborted) close();
       ws.onopen = () => onState?.({ connected: true });
       ws.onclose = () => {
         signal.removeEventListener("abort", close);
