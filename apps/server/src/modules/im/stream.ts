@@ -130,6 +130,9 @@ export function createStreamHolder(o: {
       stopped = true;
       session?.abort();
       wake?.();
+      // Give the lease up now, not when the session gets round to exiting (#15): a successor can
+      // take over at once even if a session is slow to notice the abort.
+      await release();
       await running?.catch(() => undefined);
       await release();
     },

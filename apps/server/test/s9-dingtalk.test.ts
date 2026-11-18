@@ -118,6 +118,7 @@ describe("S9 DingTalk — Stream session against a fake gateway", () => {
   let server: ReturnType<typeof Bun.serve>;
   const fromClient: any[] = [];
   let sock: { send(s: string): void; close(): void } | null = null;
+  let opens = 0;
   beforeAll(() => {
     server = Bun.serve({
       port: 0,
@@ -127,6 +128,7 @@ describe("S9 DingTalk — Stream session against a fake gateway", () => {
       },
       websocket: {
         open(ws) {
+          opens++;
           sock = ws;
         },
         message(_ws, m) {
@@ -190,6 +192,71 @@ describe("S9 DingTalk — Stream session against a fake gateway", () => {
     ac.abort();
     await done;
   });
+
+  test("#15: stop() while the ticket request is in flight opens no socket and frees the lease at once", async () => {
+    const db = await createTestDatabase("s9ticket");
+    const ws = `ws://127.0.0.1:${server.port}/connect`;
+    // A gateway whose ticket request hangs until released, and that ignores abort (worst case).
+    let releaseTicket!: () => void;
+    const gate = new Promise<void>((r) => (releaseTicket = r));
+    let ticketCalls = 0;
+    const stubborn = (async () => {
+      ticketCalls++;
+      await gate;
+      return Response.json({ endpoint: ws, ticket: "tkt-1" });
+    }) as unknown as typeof fetch;
+    // A gateway whose ticket request hangs but honours the abort signal, as fetch does.
+    const polite = (async (_i: RequestInfo | URL, init?: RequestInit) =>
+      new Promise<Response>((_r, reject) => init?.signal?.addEventListener("abort", () => reject(new DOMException("aborted", "AbortError")), { once: true }))) as unknown as typeof fetch;
+    const holder = (f: typeof fetch, who: string, log: string[]) => {
+      const dt = createDingTalkAdapter({ clientId: "k", clientSecret: "s", fetch: f });
+      return createStreamHolder({
+        databaseUrl: db.url,
+        name: "dingtalk",
+        retryMs: 50,
+        run: (signal, onState) => {
+          log.push(who);
+          return dt.runStream(async () => undefined, signal, onState);
+        },
+      });
+    };
+    const started: string[] = [];
+    const a = holder(stubborn, "a", started);
+    const p = holder(polite, "p", started);
+    const next = holder(polite, "next", started);
+    try {
+      opens = 0;
+      a.start();
+      for (let i = 0; i < 100 && ticketCalls === 0; i++) await Bun.sleep(10);
+      expect(ticketCalls).toBe(1);
+      let stopped = false;
+      const stopping = a.stop().then(() => (stopped = true));
+      // The lease is released while the ticket request is still hanging: a successor takes over.
+      next.start();
+      for (let i = 0; i < 100 && !next.status().holder; i++) await Bun.sleep(10);
+      expect(next.status().holder).toBe(true);
+      expect(a.status().holder).toBe(false);
+      await next.stop();
+      // The ticket arrives after stop: no socket is opened and stop completes.
+      releaseTicket();
+      await stopping;
+      expect(stopped).toBe(true);
+      await Bun.sleep(100);
+      expect(opens).toBe(0);
+      // With a fetch that honours the signal, stop returns without the ticket ever arriving.
+      p.start();
+      for (let i = 0; i < 100 && !started.includes("p"); i++) await Bun.sleep(10);
+      const r = await Promise.race([p.stop().then(() => "stopped"), Bun.sleep(2_000).then(() => "hung")]);
+      expect(r).toBe("stopped");
+      expect(opens).toBe(0);
+    } finally {
+      releaseTicket();
+      await a.stop();
+      await p.stop();
+      await next.stop();
+      await db.drop();
+    }
+  }, 20_000);
 });
 
 describe("S9 DingTalk — the Stream is held by one instance (lease)", () => {
