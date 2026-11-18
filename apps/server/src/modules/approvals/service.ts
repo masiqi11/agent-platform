@@ -5,7 +5,7 @@ import { approval, escalation, event, principal, task, tenant, workspace } from 
 import type { Audit } from "../../core/audit";
 import type { Ctx } from "../../core/context";
 import { DomainError, conflict, forbidden, invalid, notFound } from "../../core/errors";
-import type { Events } from "../../core/events";
+import { excerpt, type Events } from "../../core/events";
 import { newId } from "../../core/ids";
 import type { Identity } from "../identity/service";
 import type { Inbox } from "../inbox/service";
@@ -152,7 +152,7 @@ export function createApprovals(d: ApprovalDeps) {
           approvalId: id,
           kind: a.kind,
           status,
-          reason: input.reason ?? null,
+          reason: excerpt(input.reason),
           rejectTo: r[0]!.rejectTo,
           inboxPrincipalIds: [...owners, a.requestedBy],
         },
@@ -223,7 +223,7 @@ export function createApprovals(d: ApprovalDeps) {
         type: "escalation.raised",
         aggregateType: "task",
         aggregateId: input.taskId,
-        payload: { projectId: input.projectId, taskId: input.taskId, level: input.level, reason: input.reason, inboxPrincipalIds: input.targets },
+        payload: { projectId: input.projectId, taskId: input.taskId, level: input.level, reason: excerpt(input.reason), inboxPrincipalIds: input.targets },
       });
       await d.audit.write(ctx, {
         action: "escalation.raise",

@@ -93,6 +93,15 @@ export const serverSchema = {
   DINGTALK_CLIENT_ID: z.string().optional(),
   DINGTALK_CLIENT_SECRET: z.string().optional(),
   DINGTALK_ROBOT_CODE: z.string().optional(),
+  /** Feishu / Lark self-built app (FR-IM-09): event subscription callback /api/v1/webhooks/feishu. */
+  FEISHU_APP_ID: z.string().optional(),
+  FEISHU_APP_SECRET: z.string().optional(),
+  FEISHU_VERIFICATION_TOKEN: z.string().optional(),
+  FEISHU_ENCRYPT_KEY: z.string().optional(),
+  /** https://open.feishu.cn (default) or https://open.larksuite.com for Lark. */
+  FEISHU_DOMAIN: z.string().url().optional(),
+  /** Simulated IM (provider "mock") with an inject/inspect API — development, demo and e2e only. */
+  IM_MOCK: bool.default(false),
   WORKER_CONCURRENCY: z.coerce.number().int().default(4),
   EVENT_POLL_MS: z.coerce.number().int().default(1000),
   JOB_POLL_MS: z.coerce.number().int().default(1000),
@@ -129,6 +138,7 @@ export function validateProduction(env: Env): void {
   }
   if (env.AUTH_DEV_LOGIN === true) bad.push("AUTH_DEV_LOGIN");
   if (env.AUTH_SIGNUP_MODE === "open") bad.push("AUTH_SIGNUP_MODE");
+  if (env.IM_MOCK) bad.push("IM_MOCK");
   if (env.SANDBOX !== "docker") bad.push("SANDBOX");
   if (!env.PUBLIC_URL.startsWith("https://")) bad.push("PUBLIC_URL");
   const oidc = [env.OIDC_ISSUER, env.OIDC_CLIENT_ID, env.OIDC_CLIENT_SECRET].filter(Boolean).length;

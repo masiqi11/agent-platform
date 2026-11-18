@@ -43,10 +43,10 @@ export interface TestApp {
 }
 
 /** Full app over an isolated database, driven through `app.handle` (no network). */
-export async function createTestApp(label: string, env: Record<string, string> = {}): Promise<TestApp> {
+export async function createTestApp(label: string, env: Record<string, string> = {}, svc: Omit<import("../src/services").ServiceOptions, "owner"> = {}): Promise<TestApp> {
   const db = await createTestDatabase(label);
   const config = createConfig(loadEnv({ ...process.env, NODE_ENV: "test", DATABASE_URL: db.url, LOG_LEVEL: "error", PUBLIC_URL: "http://localhost:3000", ...env }));
-  const s = createServices(config, { owner: `test-${label}` });
+  const s = createServices(config, { owner: `test-${label}`, ...svc });
   const app = createApp(s);
   return {
     s,

@@ -392,4 +392,113 @@ describe("S4 model gateway", () => {
     expect((await t.req("PUT", "/api/v1/admin/models/default", { token: owner, body: { name: "nope" } })).status).toBe(400);
     expect((await t.req("PUT", "/api/v1/admin/models/default", { token: owner, body: { name: "scripted:demo" } })).status).toBe(200);
   });
+
+  test("issue #8: thinking-mode reasoning_content is returned and passed back with the tool history (DeepSeek)", async () => {
+    await provider("DeepSeek 思考模式", "openai", [{ name: "ds-think", supportsTools: true, supportsJson: true, contextWindow: 65536 }]);
+    // DeepSeek's rule: an assistant turn with tool_calls must carry its reasoning_content back.
+    handler = (body) => {
+      const bad = (body.messages as Array<Record<string, unknown>>).some((m) => m.role === "assistant" && m.tool_calls && typeof m.reasoning_content !== "string");
+      if (bad) return Response.json({ error: { message: "The reasoning_content in the thinking mode must be passed back to the API." } }, { status: 400 });
+      return Response.json({
+        choices: [
+          {
+            message: {
+              role: "assistant",
+              content: "",
+              reasoning_content: "先读文件确认超时配置。",
+              tool_calls: [{ id: "c1", type: "function", function: { name: "read_file", arguments: '{"path":"a.ts"}' } }],
+            },
+            finish_reason: "tool_calls",
+          },
+        ],
+        usage: { prompt_tokens: 10, completion_tokens: 5 },
+      });
+    };
+    const tools = [{ name: "read_file", description: "r", parameters: { type: "object", properties: { path: { type: "string" } } } }];
+    const first = await t.s.llm.complete(ctx, {
+      purpose: "test.think",
+      promptVersion: "p",
+      scope: { projectId },
+      modelPolicy: { primary: "ds-think" },
+      messages: [{ role: "user", content: "修复超时" }],
+      tools,
+    });
+    expect(first.reasoning).toBe("先读文件确认超时配置。");
+    const convo: ChatMsg[] = [
+      { role: "user", content: "修复超时" },
+      { role: "assistant", content: first.content, toolCalls: [{ id: "call_1_0", ...first.toolCalls[0]! }], reasoning: first.reasoning },
+      { role: "tool", content: "export const TIMEOUT = 30_000", toolCallId: "call_1_0", name: "read_file" },
+    ];
+    const second = await t.s.llm.complete(ctx, { purpose: "test.think", promptVersion: "p", scope: { projectId }, modelPolicy: { primary: "ds-think" }, messages: convo, tools });
+    expect(second.toolCalls[0]?.name).toBe("read_file");
+    const sent = seen.at(-1).body.messages[1];
+    expect(sent).toMatchObject({ role: "assistant", reasoning_content: "先读文件确认超时配置。" });
+    // A turn that did not think still carries the (empty) field back; dropping it is the same 400.
+    const empty = await t.s.llm.complete(ctx, {
+      purpose: "test.think",
+      promptVersion: "p",
+      scope: { projectId },
+      modelPolicy: { primary: "ds-think" },
+      messages: [convo[0]!, { ...(convo[1] as Extract<ChatMsg, { role: "assistant" }>), reasoning: "" }, convo[2]!],
+      tools,
+    });
+    expect(empty.toolCalls.length).toBe(1);
+    expect(seen.at(-1).body.messages[1].reasoning_content).toBe("");
+  });
+  test("S8-7: a reply cut off by max_tokens with nothing usable is retried once with a larger budget", async () => {
+    await provider("思考模型截断", "openai", [{ name: "ds-trunc", supportsTools: true, contextWindow: 65536 }]);
+    const budgets: number[] = [];
+    handler = (body) => {
+      budgets.push(body.max_tokens);
+      if (body.max_tokens <= 1024)
+        return Response.json({
+          choices: [{ message: { role: "assistant", content: "", reasoning_content: "想了很久……" }, finish_reason: "length" }],
+          usage: { prompt_tokens: 10, completion_tokens: 1024 },
+        });
+      return Response.json({
+        choices: [
+          {
+            message: { role: "assistant", content: "", tool_calls: [{ id: "c1", type: "function", function: { name: "write_file", arguments: '{"path":"a.ts","content":"x"}' } }] },
+            finish_reason: "tool_calls",
+          },
+        ],
+      });
+    };
+    const r = await t.s.llm.complete(ctx, {
+      purpose: "test.trunc",
+      promptVersion: "p",
+      scope: { projectId },
+      modelPolicy: { primary: "ds-trunc", maxTokens: 1024 },
+      messages: [{ role: "user", content: "修复" }],
+      tools: [{ name: "write_file", description: "w", parameters: { type: "object", properties: {} } }],
+    });
+    expect(budgets).toEqual([1024, 4096]);
+    expect(r.toolCalls[0]?.name).toBe("write_file");
+  });
+  test("S8-7: tool-call arguments cut off by max_tokens are retried with a larger budget, not run as {}", async () => {
+    await provider("参数截断", "openai", [{ name: "ds-args", supportsTools: true, contextWindow: 65536 }]);
+    const budgets: number[] = [];
+    handler = (body) => {
+      budgets.push(body.max_tokens);
+      const args = body.max_tokens <= 1024 ? '{"verdict":"approve","findings":[{"file":"src/gateway.ts","note":"超' : '{"verdict":"approve","findings":[]}';
+      return Response.json({
+        choices: [
+          {
+            message: { role: "assistant", content: "", tool_calls: [{ id: "c1", type: "function", function: { name: "submit_review", arguments: args } }] },
+            finish_reason: body.max_tokens <= 1024 ? "length" : "tool_calls",
+          },
+        ],
+      });
+    };
+    const r = await t.s.llm.complete(ctx, {
+      purpose: "test.args",
+      promptVersion: "p",
+      scope: { projectId },
+      modelPolicy: { primary: "ds-args", maxTokens: 1024 },
+      messages: [{ role: "user", content: "评审" }],
+      tools: [{ name: "submit_review", description: "r", parameters: { type: "object", properties: {} } }],
+    });
+    expect(budgets).toEqual([1024, 4096]);
+    expect(r.toolCalls[0]).toEqual({ name: "submit_review", arguments: { verdict: "approve", findings: [] } });
+  });
 });

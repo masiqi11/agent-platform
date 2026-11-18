@@ -110,7 +110,10 @@ export function createSystem(d: {
     await d.identity.require(ctx, "admin.system");
     const r = await loadDl(ctx, id);
     if (r.source === "job") {
-      await d.db.root.update(job).set({ status: "queued", attempts: 0, runAt: new Date(), lastError: null, leaseOwner: null, leaseUntil: null, updatedAt: new Date() }).where(eq(job.id, r.refId));
+      await d.db.root
+        .update(job)
+        .set({ status: "queued", attempts: 0, runAt: new Date(), lastError: null, leaseOwner: null, leaseUntil: null, leaseToken: null, updatedAt: new Date() })
+        .where(eq(job.id, r.refId));
     } else if (r.source === "event" && r.consumer) {
       try {
         await d.consumers.replayOne(r.consumer, r.refId);

@@ -41,6 +41,8 @@ export interface Config {
   demoMode: boolean;
   agentsPaused: boolean;
   dingtalk: { clientId: string; clientSecret: string; robotCode?: string } | null;
+  feishu: { appId: string; appSecret: string; verificationToken?: string; encryptKey?: string; domain?: string } | null;
+  imMock: boolean;
   worker: { concurrency: number; eventPollMs: number; jobPollMs: number; shutdownGraceMs: number };
 }
 
@@ -157,6 +159,11 @@ export function createConfig(env: Env, cwd = process.cwd()): Config {
         : null,
     demoMode: env.DEMO_MODE,
     agentsPaused: env.AGENTS_PAUSED,
+    imMock: !isProd && env.IM_MOCK,
+    feishu:
+      env.FEISHU_APP_ID && env.FEISHU_APP_SECRET
+        ? { appId: env.FEISHU_APP_ID, appSecret: env.FEISHU_APP_SECRET, verificationToken: env.FEISHU_VERIFICATION_TOKEN, encryptKey: env.FEISHU_ENCRYPT_KEY, domain: env.FEISHU_DOMAIN }
+        : null,
     dingtalk: env.DINGTALK_CLIENT_ID && env.DINGTALK_CLIENT_SECRET ? { clientId: env.DINGTALK_CLIENT_ID, clientSecret: env.DINGTALK_CLIENT_SECRET, robotCode: env.DINGTALK_ROBOT_CODE } : null,
     worker: { concurrency: env.WORKER_CONCURRENCY, eventPollMs: env.EVENT_POLL_MS, jobPollMs: env.JOB_POLL_MS, shutdownGraceMs: env.SHUTDOWN_GRACE_MS },
   };

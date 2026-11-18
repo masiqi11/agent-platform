@@ -28,7 +28,7 @@ export interface MessageView {
   id: string;
   seq: number;
   author: string;
-  authorKind: "human" | "agent" | "system";
+  authorKind: "human" | "agent" | "system" | "external";
   body: string;
   createdAt: string;
 }

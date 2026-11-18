@@ -47,6 +47,13 @@ export interface SendInput {
   externalId?: string;
   /** Pre-allocated id, so a streamed reply bubble (LLM-12) becomes the final message. */
   id?: string;
+  /**
+   * IM gateway only (system ctx): write the message as an unmapped external member (INV-20). It
+   * carries no permissions: its mentions are dropped, so it wakes nobody and notifies nobody.
+   */
+  external?: { principalId: string; label: string };
+  /** IM gateway: text typed elsewhere — ambiguous names and @所有人 are left as plain text, not errors. */
+  lenientMentions?: boolean;
 }
 
 /** Groups, members, threads and the timeline (FR-GRP-01…10). */
@@ -90,6 +97,10 @@ export function createChat(d: ChatDeps) {
     await d.projects.assertWritable(ctx, g.projectId);
     await d.identity.require(ctx, "message.send", { projectId: g.projectId });
     if (g.status === "archived") throw conflict("群已归档");
+    if (input.external && ctx.actor.kind !== "system") throw forbidden("系统", "只有 IM 网关可以代外部成员写入");
+    const author = input.external
+      ? { principalId: input.external.principalId, label: input.external.label, kind: "external" as const }
+      : { principalId: ctx.actor.principalId, label: ctx.actor.displayName, kind: ctx.actor.kind };
     const body = input.body.replace(/\r\n/g, "\n");
     if (!body.trim() && !input.attachmentIds?.length) throw invalid("消息不能为空", [{ path: "/body", message: "不能为空" }]);
     if (body.length > MAX_MESSAGE_CHARS) throw new DomainError("too_large", `消息超过 ${MAX_MESSAGE_CHARS} 字，请改为附件上传`);
@@ -97,7 +108,8 @@ export function createChat(d: ChatDeps) {
     if (ctx.actor.kind === "human" && input.source !== "system") await d.rateLimiter.hit("message", ctx.actor.principalId);
 
     const cands = await candidates(g);
-    const m = parseMentions(body, cands);
+    const parsed = parseMentions(body, cands);
+    const m = input.external ? { ...parsed, principalIds: [], all: false, ambiguous: [] } : input.lenientMentions ? { ...parsed, all: false, ambiguous: [] } : parsed;
     if (m.ambiguous.length)
       throw invalid(
         "提及的名字有重名，请从下拉中选择具体的人",
@@ -147,8 +159,8 @@ export function createChat(d: ChatDeps) {
           groupId: g.id,
           threadId: input.threadId ?? null,
           seq,
-          authorPrincipalId: ctx.actor.principalId,
-          authorLabel: ctx.actor.displayName,
+          authorPrincipalId: author.principalId,
+          authorLabel: author.label,
           kind: input.kind ?? "text",
           body,
           blocks: input.blocks ?? null,
@@ -164,13 +176,13 @@ export function createChat(d: ChatDeps) {
         await q
           .update(attachment)
           .set({ messageId: id })
-          .where(and(inArray(attachment.id, input.attachmentIds), eq(attachment.groupId, g.id), eq(attachment.uploadedBy, ctx.actor.principalId), isNull(attachment.messageId)));
+          .where(and(inArray(attachment.id, input.attachmentIds), eq(attachment.groupId, g.id), eq(attachment.uploadedBy, author.principalId), isNull(attachment.messageId)));
       }
       // The author has read up to their own message.
       await q
         .update(groupMember)
         .set({ lastReadSeq: sql`greatest(${groupMember.lastReadSeq}, ${seq})` })
-        .where(and(eq(groupMember.groupId, g.id), eq(groupMember.principalId, ctx.actor.principalId)));
+        .where(and(eq(groupMember.groupId, g.id), eq(groupMember.principalId, author.principalId)));
       await d.events.emit(ctx, {
         type: "message.created",
         aggregateType: "message",
@@ -183,7 +195,7 @@ export function createChat(d: ChatDeps) {
           threadId: input.threadId ?? null,
           mentionIds: m.principalIds,
           mentionAll: m.all,
-          authorKind: ctx.actor.kind,
+          authorKind: author.kind,
           wakeDepth: input.wakeDepth ?? 0,
           kind: input.kind ?? "text",
         },
@@ -379,6 +391,51 @@ export function createChat(d: ChatDeps) {
     return { ok: true };
   }
 
+  /**
+   * IM-补4: an edit or recall made in the IM client, synced as a platform edit / soft delete. The
+   * gateway (system ctx) has already matched the IM sender to the message's external id.
+   */
+  async function syncExternal(ctx: Ctx, input: { source: string; externalId: string; op: "edit" | "recall"; body?: string; editorPrincipalId: string }) {
+    if (ctx.actor.kind !== "system") throw forbidden("系统");
+    const [m] = await db.root
+      .select()
+      .from(message)
+      .where(and(eq(message.source, input.source), eq(message.externalId, input.externalId), eq(message.tenantId, ctx.tenantId)));
+    if (!m || m.deletedAt) return { ok: true as const, changed: false };
+    const [g] = await db.root.select().from(chatGroup).where(eq(chatGroup.id, m.groupId));
+    if (input.op === "recall") {
+      await db.tx(async (q) => {
+        await q.update(message).set({ deletedAt: new Date(), deletedBy: input.editorPrincipalId, tokens: null }).where(eq(message.id, m.id));
+        await d.events.emit(ctx, { type: "message.deleted", aggregateType: "message", aggregateId: m.id, payload: { projectId: g!.projectId, groupId: g!.id, messageId: m.id, seq: m.seq } });
+        await d.audit.write(ctx, { action: "message.delete", resourceType: "message", resourceId: m.id, projectId: g!.projectId, after: { reason: `${input.source} 撤回` } });
+      });
+      return { ok: true as const, changed: true };
+    }
+    const body = (input.body ?? "").replace(/\r\n/g, "\n").slice(0, MAX_MESSAGE_CHARS);
+    if (!body.trim() || body === m.body) return { ok: true as const, changed: false };
+    await db.tx(async (q) => {
+      const [v] = await q
+        .select({ n: sql<number>`coalesce(max(version),0)::int` })
+        .from(messageVersion)
+        .where(eq(messageVersion.messageId, m.id));
+      await q.insert(messageVersion).values({ messageId: m.id, version: (v?.n ?? 0) + 1, body: m.body, blocks: m.blocks, editedBy: input.editorPrincipalId });
+      await q
+        .update(message)
+        .set({ body, editedAt: new Date(), tokens: sql`to_tsvector('simple', ${tokensForIndex(body)})` })
+        .where(eq(message.id, m.id));
+      await d.events.emit(ctx, { type: "message.updated", aggregateType: "message", aggregateId: m.id, payload: { projectId: g!.projectId, groupId: g!.id, messageId: m.id, seq: m.seq } });
+      await d.audit.write(ctx, {
+        action: "message.edit",
+        resourceType: "message",
+        resourceId: m.id,
+        projectId: g!.projectId,
+        before: { length: m.body.length },
+        after: { length: body.length, via: input.source },
+      });
+    });
+    return { ok: true as const, changed: true };
+  }
+
   async function versions(ctx: Ctx, id: string) {
     const { m } = await messageFor(ctx, id);
     const rows = await db.root.select().from(messageVersion).where(eq(messageVersion.messageId, m.id)).orderBy(asc(messageVersion.version));
@@ -564,7 +621,8 @@ export function createChat(d: ChatDeps) {
   }
 
   /** GRP-补7: whitelist, size cap, SHA-256, scan status (no scanner → "unscanned"). */
-  async function upload(ctx: Ctx, groupId: string, file: File) {
+  async function upload(ctx: Ctx, groupId: string, file: File, opts: { uploadedBy?: string } = {}) {
+    if (opts.uploadedBy && ctx.actor.kind !== "system") throw forbidden("系统", "只有 IM 网关可以代为上传");
     const g = await groupFor(ctx, groupId);
     await d.identity.require(ctx, "message.send", { projectId: g.projectId });
     if (file.size > d.config.maxUploadMb * 1024 * 1024) throw new DomainError("too_large", `附件超过 ${d.config.maxUploadMb} MB`);
@@ -584,7 +642,7 @@ export function createChat(d: ChatDeps) {
         size: stored.size,
         mime,
         scanStatus: "unscanned",
-        uploadedBy: ctx.actor.principalId,
+        uploadedBy: opts.uploadedBy ?? ctx.actor.principalId,
       });
       await d.audit.write(ctx, {
         action: "attachment.upload",
@@ -624,6 +682,7 @@ export function createChat(d: ChatDeps) {
     edit,
     markCorrected,
     remove,
+    syncExternal,
     versions,
     search,
     listGroups,

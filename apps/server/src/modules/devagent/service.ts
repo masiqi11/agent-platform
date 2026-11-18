@@ -6,7 +6,8 @@ import type { Audit } from "../../core/audit";
 import type { Ctx } from "../../core/context";
 import { DomainError, forbidden, invalid, notFound } from "../../core/errors";
 import type { Consumer, Events } from "../../core/events";
-import { RetryLater, type createJobs } from "../../core/jobs";
+import { JobAborted, RetryLater, type createJobs } from "../../core/jobs";
+import { agentMaxTokens } from "../llm/service";
 import { log } from "../../core/logger";
 import type { Config } from "../../config";
 import type { Database } from "../../db";
@@ -397,7 +398,7 @@ export function createDevAgent(d: {
     return s && s.status === "running";
   }
 
-  async function turn(p: { tenantId: string; taskId: string; agentId: string; kind: DevWakeKind }, traceId: string) {
+  async function turn(p: { tenantId: string; taskId: string; agentId: string; kind: DevWakeKind }, traceId: string, signal?: AbortSignal) {
     const sys = await d.identity.systemCtx(p.tenantId, traceId);
     if (await d.runtime.paused(p.tenantId)) return { skipped: "paused" };
     const a = await loadAgent(p.agentId);
@@ -455,7 +456,9 @@ export function createDevAgent(d: {
     if (a.engine !== "builtin" && d.harness) return harnessTurn({ sys, actx, a, t, ses, wsId: ws.id, st, checkpoint, kind: p.kind, prKey: await projectKey(t.projectId) });
     const modelName = a.modelPolicy.primary ?? (await d.llm.defaultModelName(p.tenantId));
     const mdl = await d.llm.findModel(p.tenantId, modelName);
-    const budgets = d.runtime.layerBudgets(mdl?.m.contextWindow ?? 8192, a.modelPolicy.maxTokens ?? 1024);
+    // Coding turns write whole files inside one tool call; 1024 output tokens is far too few (S8-7).
+    const policy = { ...a.modelPolicy, maxTokens: a.modelPolicy.maxTokens ?? agentMaxTokens(mdl?.m.contextWindow) };
+    const budgets = d.runtime.layerBudgets(mdl?.m.contextWindow ?? 8192, policy.maxTokens);
     const [pr] = await db.root.select({ key: project.key }).from(project).where(eq(project.id, t.projectId));
     const pkg: ContextPackage = {
       policy: {
@@ -503,6 +506,8 @@ export function createDevAgent(d: {
     let usedModel = modelName;
     try {
       while (true) {
+        // #8: the job timed out or another worker owns it now — no further side effects from here.
+        if (signal?.aborted) throw new JobAborted(`dev.turn aborted: ${String((signal.reason as Error | undefined)?.message ?? "")}`);
         if (steps >= maxSteps) {
           stopReason = "max_steps";
           break;
@@ -530,7 +535,7 @@ export function createDevAgent(d: {
             scope: { projectId: t.projectId, taskId: t.id, sessionId: ses.id, agentId: a.id },
             messages: [baseRendered.messages[0]!, { role: "user", content: user }, ...convo],
             tools: d.runtime.toolSpecs(a),
-            modelPolicy: a.modelPolicy,
+            modelPolicy: policy,
             dataClasses: ["code", "task"],
           });
         } catch (e) {
@@ -554,9 +559,10 @@ export function createDevAgent(d: {
           break;
         }
         const ided = calls.map((c, i) => ({ id: `call_${steps}_${i}`, name: c.name, arguments: c.arguments }));
-        convo.push({ role: "assistant", content: res.content, toolCalls: ided });
+        convo.push({ role: "assistant", content: res.content, toolCalls: ided, ...(res.reasoning !== undefined ? { reasoning: res.reasoning } : {}) });
         const answered = new Set<string>();
         for (const [ci, call] of calls.entries()) {
+          if (signal?.aborted) throw new JobAborted("dev.turn aborted before a tool call");
           // AGT-补1 loop guard: the same call with the same args N times in a row aborts the turn.
           const sig = `${call.name}:${JSON.stringify(call.arguments)}`;
           recent.push(sig);

@@ -156,3 +156,57 @@ test("AI review includes all commits since previous push and publishes only chan
     await rm(dir, { recursive: true, force: true });
   }
 });
+
+test("#12: a renamed failing step in the same job comments on the existing issue instead of opening a new one", async () => {
+  const dir = await mkdtemp(join(tmpdir(), "main-review-test-"));
+  const savedEnv = { ...process.env };
+  const savedFetch = globalThis.fetch;
+  const savedExit = process.exitCode;
+  const issues = [];
+  const comments = [];
+  let step = "typecheck";
+  try {
+    const base = {
+      id: 5,
+      workflow_id: 1,
+      name: "ci",
+      event: "push",
+      head_branch: "main",
+      head_repository: { full_name: "test/repo" },
+      conclusion: "failure",
+      html_url: "https://github.com/test/repo/actions/runs/5",
+    };
+    const write = (sha, n) => writeFile(join(dir, "event.json"), JSON.stringify({ workflow_run: { ...base, run_number: n, head_sha: sha } }));
+    Object.assign(process.env, { GITHUB_EVENT_PATH: join(dir, "event.json"), GITHUB_REPOSITORY: "test/repo", GH_TOKEN: "test-only", GITHUB_STEP_SUMMARY: join(dir, "summary.md") });
+    delete process.env.DEEPSEEK_API_KEY;
+    globalThis.fetch = async (url, init) => {
+      const p = new URL(url).pathname;
+      let data;
+      if (p.endsWith("/jobs")) data = { jobs: [{ name: "check", conclusion: "failure", steps: [{ name: step, conclusion: "failure" }], html_url: base.html_url }] };
+      else if (/\/issues\/\d+\/comments$/.test(p) && init.method === "GET") data = comments;
+      else if (/\/issues\/\d+\/comments$/.test(p) && init.method === "POST") {
+        data = JSON.parse(init.body);
+        comments.push(data);
+      } else if (p.endsWith("/issues") && init.method === "GET") data = issues;
+      else if (p.endsWith("/issues") && init.method === "POST") {
+        data = { ...JSON.parse(init.body), number: 20 + issues.length, html_url: "https://github.com/test/repo/issues/20" };
+        issues.push(data);
+      } else throw new Error("Unexpected request: " + p);
+      return Response.json(data);
+    };
+    await write("b".repeat(40), 5);
+    await run();
+    step = "Typecheck (app)"; // renamed step, new commit, same job
+    await write("c".repeat(40), 6);
+    await run();
+    assert.equal(issues.length, 1);
+    assert.equal(comments.length, 1);
+    assert.match(comments[0].body, /Typecheck \(app\)/);
+  } finally {
+    globalThis.fetch = savedFetch;
+    process.exitCode = savedExit;
+    for (const k of Object.keys(process.env)) if (!(k in savedEnv)) delete process.env[k];
+    Object.assign(process.env, savedEnv);
+    await rm(dir, { recursive: true, force: true });
+  }
+});

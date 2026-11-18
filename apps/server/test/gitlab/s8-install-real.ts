@@ -6,9 +6,12 @@
  * answer the follow-up, accept the proposal, approve the merge) and waits for the agents.
  *
  *   BASE=http://127.0.0.1:3000 ADMIN_TOKEN=… LLM_BASE_URL=… LLM_API_KEY=… LLM_MODEL=… \
- *   GITLAB_URL=http://gitlab/pay/payments-s8 GITLAB_TOKEN=… bun test/gitlab/s8-install-real.ts
+ *   GITLAB_URL=https://gitlab.example/pay/payments-s8 GITLAB_TOKEN=… [GITLAB_CA_FILE=ca.pem] bun test/gitlab/s8-install-real.ts
+ *
+ * Production only accepts https GitLab; a self-signed GitLab passes its CA (PEM) in GITLAB_CA_FILE,
+ * which goes into the bind form's「CA 证书」field (docs/deploy.md §8).
  */
-import { writeFileSync } from "node:fs";
+import { readFileSync, writeFileSync } from "node:fs";
 import { resolve } from "node:path";
 
 const env = (k: string) => {
@@ -55,7 +58,8 @@ try {
     isExternal: true,
     apiKey: env("LLM_API_KEY"),
     apis: ["chat", "responses", "messages"],
-    models: [{ name: MODEL, contextWindow: 200_000 }],
+    // Same as the console's「添加供应商」form defaults: tool calls and JSON on.
+    models: [{ name: MODEL, contextWindow: 200_000, supportsTools: true, supportsJson: true }],
   });
   const test = await api<{ ok: boolean; latencyMs: number; error?: string }>("POST", `/admin/models/providers/${prov.id}/test`);
   await api("PUT", "/admin/models/default", { name: MODEL });
@@ -74,11 +78,15 @@ try {
     name: "payments",
     url: env("GITLAB_URL"),
     token: env("GITLAB_TOKEN"),
+    ...(process.env.GITLAB_CA_FILE ? { caCert: readFileSync(process.env.GITLAB_CA_FILE, "utf8") } : {}),
   });
   mark("GitLab repo bound (access check)", bound.check.ok, JSON.stringify(bound.check.warnings ?? []));
 
   const messages = async () =>
-    (await api<{ items: Array<{ id: string; authorPrincipalId: string; body: string; kind: string; seq: number }> }>("GET", `/groups/${p.mainGroupId}/messages?limit=50`)).items;
+    (await api<{ items: Array<{ id: string; author: { principalId: string }; body: string; kind: string; seq: number }> }>("GET", `/groups/${p.mainGroupId}/messages?limit=50`)).items.map((m) => ({
+      ...m,
+      authorPrincipalId: m.author.principalId,
+    }));
   const say = (body: string) => api("POST", `/groups/${p.mainGroupId}/messages`, { body });
 
   // ── 1–2: ask the captain; it restates and asks for what's missing ──
@@ -87,6 +95,8 @@ try {
   mark("1–2 captain replies to the request", true, reply.body);
 
   // ── 3: details → proposal with acceptance criteria ──
+  // Answer the follow-up once it is asked (a person replies to the question card, not before it exists).
+  await until("captain follow-up question", async () => (await messages()).find((m) => m.kind === "question" && m.seq > m1.message.seq), 3).catch(() => null);
   await say("从昨天下午 3 点开始，下单接口 p99 超过 30 秒才失败，上游网关 5 秒就断开，影响所有下单用户");
   const prp = await until(
     "task proposal",
@@ -101,8 +111,23 @@ try {
   // ── 4: a human confirms in the web console ──
   const acc = await api<{ resultTaskIds: string[] }>("POST", `/proposals/${prp.id}/accept`);
   taskId = acc.resultTaskIds[0]!;
-  const tk0 = await api<{ status: string; assigneeAgentId: string | null }>("GET", `/tasks/${taskId}`);
-  mark("4 human accepts → task created and assigned", Boolean(taskId && tk0.assigneeAgentId), `status ${tk0.status}`);
+  type TaskView = { status: string; assignee: { id: string } | null };
+  let tk0 = await api<TaskView>("GET", `/tasks/${taskId}`);
+  if (!tk0.assignee) {
+    // Priorities outside the auto-assign policy (e.g. P1) get an assignment proposal: a person confirms it.
+    const asg = await until(
+      "assignment proposal",
+      async () =>
+        (await api<Array<{ id: string; kind: string; payload: { taskId?: string; agentName?: string } }>>("GET", `/projects/${p.id}/proposals?status=pending`)).find(
+          (x) => x.kind === "assign" && x.payload.taskId === taskId,
+        ),
+      3,
+    );
+    await api("POST", `/proposals/${asg.id}/accept`);
+    tk0 = await api<TaskView>("GET", `/tasks/${taskId}`);
+    mark("4b human confirms the assignment proposal", Boolean(tk0.assignee), asg.payload.agentName ?? "");
+  }
+  mark("4 human accepts → task created and assigned", Boolean(taskId && tk0.assignee), `status ${tk0.status}`);
 
   // ── 5–8: dev fixes, MR + GitLab CI, review, test; status changes logged as they happen ──
   let last = "";
@@ -121,8 +146,9 @@ try {
     },
     45,
   );
-  const code = await api<{ mr?: { ref?: string; url?: string } | null; ci?: { status?: string } | null }>("GET", `/tasks/${taskId}/code`).catch(() => null);
-  mark("5–8 fix → MR → GitLab CI → review → test → merge approval requested", true, `path ${seen.join(" → ")}; MR ${code?.mr?.ref ?? "?"}; CI ${code?.ci?.status ?? "?"}`);
+  const code = await api<{ workspaces: Array<{ mrRef: string | null; mrUrl: string | null; ci: { status?: string } | null }> }>("GET", `/tasks/${taskId}/code`).catch(() => null);
+  const ws = code?.workspaces[0];
+  mark("5–8 fix → MR → GitLab CI → review → test → merge approval requested", Boolean(ws?.mrRef), `path ${seen.join(" → ")}; MR ${ws?.mrRef ?? "?"}; CI ${ws?.ci?.status ?? "?"}`);
 
   // ── 9: a human approves with the evidence; the merge queue merges ──
   await api("POST", `/approvals/${appr.id}/decide`, { decision: "approve", reason: "证据齐全，同意合并" });

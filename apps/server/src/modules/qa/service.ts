@@ -5,7 +5,8 @@ import type { Ctx } from "../../core/context";
 import { DomainError, invalid } from "../../core/errors";
 import type { Consumer, Events } from "../../core/events";
 import { newId } from "../../core/ids";
-import { RetryLater, type createJobs } from "../../core/jobs";
+import { JobAborted, RetryLater, type createJobs } from "../../core/jobs";
+import { agentMaxTokens } from "../llm/service";
 import { log, redactValue } from "../../core/logger";
 import type { ObjectStore } from "../../core/object-store";
 import type { Database } from "../../db";
@@ -255,7 +256,7 @@ export function createQa(d: {
 
   /* ───────────── the turn ───────────── */
 
-  async function turn(p: { tenantId: string; taskId: string; agentId: string; role: QaRole; headSha: string | null }, traceId: string) {
+  async function turn(p: { tenantId: string; taskId: string; agentId: string; role: QaRole; headSha: string | null }, traceId: string, signal?: AbortSignal) {
     const sys = await d.identity.systemCtx(p.tenantId, traceId);
     if (await d.runtime.paused(p.tenantId)) return { skipped: "paused" };
     const [a] = await db.root.select().from(agent).where(eq(agent.id, p.agentId));
@@ -269,6 +270,10 @@ export function createQa(d: {
     if (!repo) return { skipped: "no_repo" };
     const ses = await d.runtime.getOrCreateSession(p.tenantId, a, "task", t.id, null);
     if (!(await d.runtime.lease(ses.id))) throw new RetryLater(5_000, "session leased elsewhere");
+    // A review/test conclusion carries a full findings list in one tool call: size the output budget
+    // to the model, as the dev agent does (S8-7: 1024 truncated submit_review's arguments).
+    const qaModel = await d.llm.findModel(p.tenantId, a.modelPolicy.primary ?? (await d.llm.defaultModelName(p.tenantId)));
+    const qaMaxTokens = a.modelPolicy.maxTokens ?? agentMaxTokens(qaModel?.m.contextWindow);
     if (await d.llm.budgetBlocked(p.tenantId, { projectId: t.projectId, taskId: t.id })) {
       await d.runtime.finish(sys, ses, "suspended", "budget_exceeded", { steps: 0, tokens: 0, cost: 0 });
       return { skipped: "budget" };
@@ -366,6 +371,7 @@ export function createQa(d: {
         const limit = a.budget.maxSteps ?? QA_MAX_STEPS;
         let grace = 0; // one extra conclusion-only step when the forced conclusion is rejected by validation
         for (;;) {
+          if (signal?.aborted) throw new JobAborted(`qa.turn aborted: ${String((signal.reason as Error | undefined)?.message ?? "")}`);
           if (steps >= limit + grace) {
             stopReason = "max_steps";
             break;
@@ -393,7 +399,7 @@ export function createQa(d: {
                   : []),
               ],
               tools: lastStep ? tools.filter((x) => x.name === conclude) : tools,
-              modelPolicy: a.modelPolicy,
+              modelPolicy: { ...a.modelPolicy, maxTokens: qaMaxTokens },
               dataClasses: ["code", "task"],
             });
           } catch (e) {
@@ -412,9 +418,10 @@ export function createQa(d: {
             break;
           }
           const ided = calls.map((c, i) => ({ id: `call_${steps}_${i}`, name: c.name, arguments: c.arguments }));
-          convo.push({ role: "assistant", content: res.content, toolCalls: ided });
+          convo.push({ role: "assistant", content: res.content, toolCalls: ided, ...(res.reasoning !== undefined ? { reasoning: res.reasoning } : {}) });
           const answered = new Set<string>();
           for (const [ci, call] of calls.entries()) {
+            if (signal?.aborted) throw new JobAborted("qa.turn aborted before a tool call");
             const out = await d.runtime.invokeTool(actx, st, call as ParsedToolCall);
             const text = JSON.stringify(out).slice(0, 12_000);
             await d.runtime.recordTurn(ses.id, { role: "tool", content: text.slice(0, 4000), toolCalls: [call] });

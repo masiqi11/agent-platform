@@ -306,6 +306,13 @@ export function createProposals(d: ProposalDeps) {
     } else if (p.kind === "assign") {
       await d.tasks.update(ctx, str(pl.taskId), { assigneeAgentId: str(pl.assigneeAgentId) });
       resultTaskIds.push(str(pl.taskId));
+      // Same rule as a confirmed create_task: a backlog task whose guards now hold becomes ready, which
+      // wakes the dev agent. Found live (S8-7): a P1 task waited in backlog after its assignment was confirmed.
+      const [cur] = await db.root
+        .select({ status: task.status })
+        .from(task)
+        .where(eq(task.id, str(pl.taskId)));
+      if (cur?.status === "backlog") await d.tasks.transition(ctx, str(pl.taskId), "ready", {}, { viaProposalId: id }).catch(() => undefined);
     } else if (p.kind === "transition") {
       await d.tasks.transition(ctx, str(pl.taskId), pl.to as TaskStatus, { reason: pl.reason as string | undefined, needs: pl.needs as string | undefined }, { viaProposalId: id });
       resultTaskIds.push(str(pl.taskId));

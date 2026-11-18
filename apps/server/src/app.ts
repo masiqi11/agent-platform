@@ -24,6 +24,7 @@ import { llmProxyRoutes } from "./routes/llm-proxy";
 import { mcpRoutes } from "./routes/mcp";
 import { opsRoutes } from "./routes/ops";
 import { knowledgeRoutes } from "./routes/knowledge";
+import { imRoutes } from "./routes/im";
 import type { Services } from "./services";
 
 const CSP = [
@@ -161,6 +162,7 @@ export function createApp(s: Services) {
     .use(codeRoutes(s))
     .use(qualityRoutes(s))
     .use(knowledgeRoutes(s))
+    .use(imRoutes(s))
     .use(llmProxyRoutes(s))
     .use(mcpRoutes(s))
     .use(opsRoutes(s))

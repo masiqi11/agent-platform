@@ -38,7 +38,9 @@ export function transitionErrorText(e: unknown): string {
 export async function runTransition(task: { id: string; version: number; projectId: string }, to: TaskStatus, extra: { reason?: string; needs?: string } = {}) {
   const r = await unwrap(api.api.v1.tasks({ id: task.id }).transition.post({ to, ...extra }, { headers: { "if-match": String(task.version) } }));
   void queryClient.invalidateQueries({ queryKey: ["tasks", task.projectId] });
-  void queryClient.invalidateQueries({ queryKey: ["task", task.id] });
+  // Wait for the task's new version before the caller reports success: the next edit on the page
+  // must not be sent with the old If-Match (#8: transition then criteria → 409).
+  await queryClient.invalidateQueries({ queryKey: ["task", task.id] });
   void queryClient.invalidateQueries({ queryKey: ["task-timeline", task.id] });
   return r;
 }

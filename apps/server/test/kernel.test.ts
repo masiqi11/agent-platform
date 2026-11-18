@@ -220,6 +220,98 @@ describe("jobs", () => {
   });
 });
 
+describe("#8 job execution rights: lease renewal, fencing, timeout", () => {
+  test("a long handler keeps its lease (auto-renewal): recovery does not hand it to a second worker", async () => {
+    const a = createJobs(db, { owner: "renew-a", leaseMs: 100 });
+    const b = createJobs(db, { owner: "renew-b", leaseMs: 100 });
+    let runs = 0;
+    a.register("long", async () => {
+      runs++;
+      await Bun.sleep(400);
+    });
+    b.register("long", async () => void runs++);
+    await a.enqueue("long", {});
+    const [j] = await a.claim(1);
+    const running = a.runJob(j!);
+    await Bun.sleep(250); // well past the 100 ms lease
+    expect(await b.recoverExpired()).toBe(0);
+    expect(await b.claim(1)).toHaveLength(0);
+    await running;
+    const [row] = await db.root.select().from(job).where(eq(job.id, j!.id));
+    expect(row!.status).toBe("succeeded");
+    expect(runs).toBe(1);
+  });
+
+  test("an old owner that lost the job can't overwrite the new execution, and its signal aborts", async () => {
+    const a = createJobs(db, { owner: "fence-a", leaseMs: 60_000 });
+    const b = createJobs(db, { owner: "fence-b", leaseMs: 60_000 });
+    let aborted = false;
+    let renewA!: () => Promise<void>;
+    let release!: () => void;
+    const gate = new Promise<void>((r) => (release = r));
+    let started!: () => void;
+    const up = new Promise<void>((r) => (started = r));
+    a.register("fence", async (_p, { signal, heartbeat }) => {
+      renewA = heartbeat;
+      signal.addEventListener("abort", () => (aborted = true));
+      started();
+      await gate;
+    });
+    b.register("fence", async () => {});
+    await a.enqueue("fence", {});
+    const [j] = await a.claim(1);
+    const old = a.runJob(j!);
+    await up;
+    // A stalls (GC pause, partition…) past its lease; recovery hands the job to B with a new token.
+    await db.root
+      .update(job)
+      .set({ leaseUntil: new Date(Date.now() - 1000) })
+      .where(eq(job.id, j!.id));
+    expect(await b.recoverExpired()).toBe(1);
+    const [j2] = await b.claim(1);
+    expect(j2!.id).toBe(j!.id);
+    expect(j2!.leaseToken).not.toBe(j!.leaseToken);
+    // A wakes up: its renewal finds the job gone → aborted; its completion is fenced off.
+    await renewA();
+    expect(aborted).toBe(true);
+    release();
+    await old;
+    const [mid] = await db.root.select().from(job).where(eq(job.id, j!.id));
+    expect(mid).toMatchObject({ status: "running", leaseOwner: "fence-b", leaseToken: j2!.leaseToken });
+    await b.runJob(j2!);
+    const [end] = await db.root.select().from(job).where(eq(job.id, j!.id));
+    expect(end!.status).toBe("succeeded");
+  });
+
+  test("timeout: the handler's signal aborts at the deadline and its late finish can't settle the job", async () => {
+    const w = createJobs(db, { owner: "to", leaseMs: 60_000 });
+    let abortedAt = 0;
+    let lateWrites = 0;
+    w.register(
+      "slow",
+      async (_p, { signal }) => {
+        signal.addEventListener("abort", () => (abortedAt = Date.now()));
+        await Bun.sleep(160);
+        if (!signal.aborted) lateWrites++; // a well-behaved handler checks before each side effect
+      },
+      30,
+    );
+    await w.enqueue("slow", {}, { maxAttempts: 3 });
+    const t0 = Date.now();
+    const [j] = await w.claim(1);
+    await w.runJob(j!);
+    expect(abortedAt - t0).toBeLessThan(150);
+    const [row] = await db.root.select().from(job).where(eq(job.id, j!.id));
+    expect(row!.status).toBe("queued"); // retried later, attempt counted
+    expect(row!.lastError).toContain("timeout");
+    await Bun.sleep(200);
+    expect(lateWrites).toBe(0);
+    const [after] = await db.root.select().from(job).where(eq(job.id, j!.id));
+    expect(after!.status).toBe("queued");
+    await db.root.update(job).set({ status: "succeeded" }).where(eq(job.id, j!.id));
+  });
+});
+
 describe("event consumers", () => {
   test("at-least-once, offsets per consumer, failing consumer does not block another; restart resumes", async () => {
     const events = createEvents(db);
@@ -264,6 +356,36 @@ describe("INV-16 idempotency", () => {
     await expect(idem.run("prn_a", "k1", { x: 2 }, fn)).rejects.toThrow();
     const c = await idem.run("prn_b", "k1", { x: 1 }, fn);
     expect(c.body).toEqual({ n: 2 });
+  });
+});
+
+describe("#8 idempotency under concurrency", () => {
+  test("two concurrent requests with the same key run the business once and return the same result", async () => {
+    const idem = createIdempotency(db);
+    let executions = 0;
+    const fn = async () => {
+      const n = ++executions;
+      await Bun.sleep(120);
+      return { status: 201, body: { execution: n } };
+    };
+    const [a, b] = await Promise.all([idem.run("prn_c", "same-key", { x: 1 }, fn), idem.run("prn_c", "same-key", { x: 1 }, fn)]);
+    expect(executions).toBe(1);
+    expect(a.body).toEqual({ execution: 1 });
+    expect(b.body).toEqual({ execution: 1 });
+    expect([a.replayed, b.replayed].filter(Boolean)).toHaveLength(1);
+  });
+
+  test("a failed first attempt releases the key; the retry executes", async () => {
+    const idem = createIdempotency(db);
+    let n = 0;
+    await expect(
+      idem.run("prn_c", "flaky", {}, async () => {
+        n++;
+        throw new Error("boom");
+      }),
+    ).rejects.toThrow("boom");
+    const r = await idem.run("prn_c", "flaky", {}, async () => ({ status: 200, body: { n: ++n } }));
+    expect(r).toMatchObject({ body: { n: 2 }, replayed: false });
   });
 });
 
