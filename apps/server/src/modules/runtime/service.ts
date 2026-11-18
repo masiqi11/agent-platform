@@ -276,7 +276,8 @@ export function createRuntime(d: { config: Config; db: Database; audit: Audit; e
     return s.slice(0, lo) + "…";
   };
 
-  const renderMessage = (m: MessageView) => `#${m.seq} ${m.author}${m.authorKind === "agent" ? "（Agent）" : ""}: ${m.body.replace(/\n/g, " ⏎ ")}`;
+  const renderMessage = (m: MessageView) =>
+    `#${m.seq} ${m.author}${m.authorKind === "agent" ? "（Agent）" : m.authorKind === "external" ? "（未映射的外部成员）" : ""}: ${m.body.replace(/\n/g, " ⏎ ")}`;
 
   /** Renders the context package into model messages; untrusted parts are fenced (INV-18). */
   function render(pkg: ContextPackage, extra: { instructions: string; triggerBody?: string; triggerAuthor?: string; triggerId?: string; notes?: string[]; budgets: ReturnType<typeof layerBudgets> }) {

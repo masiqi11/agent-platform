@@ -35,6 +35,11 @@ import { createQuality } from "./modules/quality/service";
 import { createQa } from "./modules/qa/service";
 import { createMergeQueue } from "./modules/mergequeue/service";
 import { createKnowledge } from "./modules/knowledge/service";
+import { createIm } from "./modules/im/service";
+import type { ImAdapter } from "./modules/im/types";
+import { createDingTalkAdapter } from "./modules/im/dingtalk";
+import { createFeishuAdapter } from "./modules/im/feishu";
+import { createMockImAdapter } from "./modules/im/mock";
 
 export interface ServiceOptions {
   /** Worker/consumer owner id (unique per process). */
@@ -45,12 +50,26 @@ export interface ServiceOptions {
   sandbox?: Sandbox;
   /** fetch used for SCM REST calls (tests point it at a fake GitLab). */
   scmFetch?: typeof fetch;
+  /** IM adapters (tests pass the mock; production adds DingTalk when configured). */
+  imAdapters?: ImAdapter[];
+  /** Tests: a Feishu adapter with a fake fetch (its adapter must also be in imAdapters). */
+  feishu?: import("./modules/im/feishu").Feishu;
 }
 
 export function createServices(config: Config, opts: ServiceOptions = {}) {
   configureLogger({
     level: config.logLevel,
-    secrets: [config.auth.secret, config.jwt.secret, ...Object.values(config.masterKeys), config.llmBootstrap?.apiKey ?? "", config.dingtalk?.clientSecret ?? "", config.auth.oidc?.clientSecret ?? ""],
+    secrets: [
+      config.auth.secret,
+      config.jwt.secret,
+      ...Object.values(config.masterKeys),
+      config.llmBootstrap?.apiKey ?? "",
+      config.dingtalk?.clientSecret ?? "",
+      config.feishu?.appSecret ?? "",
+      config.feishu?.encryptKey ?? "",
+      config.feishu?.verificationToken ?? "",
+      config.auth.oidc?.clientSecret ?? "",
+    ],
   });
   const owner = opts.owner ?? `${process.pid}-${newId("wrk")}`;
   const db = opts.db ?? createDatabase(config.databaseUrl, config.dbPoolMax);
@@ -102,6 +121,15 @@ export function createServices(config: Config, opts: ServiceOptions = {}) {
   mergeQueue.hooks.afterMerged = (ctx, taskId) => captain.completionSummary(ctx, taskId);
   const knowledge = createKnowledge({ config, db, audit, events, jobs, identity, projects, repos, workspaces, llm, runtime });
   captain.kbHooks.federated = (ctx, q) => knowledge.federated(ctx, q);
+  const imMock = config.imMock ? createMockImAdapter({ provider: "mock" }) : null;
+  // FR-IM-01: DingTalk when its app credentials are configured; the Stream itself is held by the worker.
+  // FR-IM-09: Feishu when its app credentials are configured (event subscription callback).
+  const feishu = config.feishu ? createFeishuAdapter({ ...config.feishu, fetch: outbound.wrap(lateFetch), maxDownloadBytes: config.maxUploadMb * 1024 * 1024 }) : (opts.feishu ?? null);
+  const dingtalk = config.dingtalk ? createDingTalkAdapter({ ...config.dingtalk, fetch: outbound.wrap(lateFetch), maxDownloadBytes: config.maxUploadMb * 1024 * 1024 }) : null;
+  const im = createIm(
+    { config, db, audit, events, jobs, identity, projects, chat, tasks, inbox, idempotency, rateLimiter },
+    opts.imAdapters ?? [...(dingtalk ? [dingtalk.adapter] : []), ...(feishu ? [feishu.adapter] : []), ...(imMock ? [imMock] : [])],
+  );
 
   const base = {
     config,
@@ -140,6 +168,10 @@ export function createServices(config: Config, opts: ServiceOptions = {}) {
     qa,
     mergeQueue,
     knowledge,
+    im,
+    dingtalk: opts.imAdapters ? null : dingtalk,
+    feishu,
+    imMock,
     addRedactionValue,
   };
   return base;

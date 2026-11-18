@@ -14,6 +14,8 @@ import { absoluteTime } from "@/lib/i18n";
 import { cn } from "@/lib/utils";
 import type { Msg } from "./timeline-store";
 
+const SOURCE_LABEL: Record<string, string> = { dingtalk: "钉钉", feishu: "飞书", mock: "模拟 IM" };
+
 const CARD: Record<string, { label: string; cls: string }> = {
   summary_card: { label: "摘要", cls: "border-border bg-card" },
   proposal_card: { label: "任务提议", cls: "border-attention/30 bg-attention-soft/50" },
@@ -97,6 +99,12 @@ export const MessageItem = memo(function MessageItem({
           <div className="flex items-baseline gap-2">
             <span className={cn("text-[14px] font-semibold", isAgent && "text-agent")}>{m.author.name}</span>
             {isAgent && <span className="rounded bg-agent-soft px-1 py-px text-[10px] font-medium text-agent">Agent</span>}
+            {m.author.kind === "external" && (
+              <span className="rounded bg-muted px-1 py-px text-[10px] font-medium text-muted-foreground" title="未绑定平台身份的 IM 成员，没有任何权限">
+                未映射
+              </span>
+            )}
+            {SOURCE_LABEL[m.source] && <span className="text-[10px] text-muted-foreground">来自{SOURCE_LABEL[m.source]}</span>}
             {m.author.name !== m.author.currentName && <span className="text-[11px] text-muted-foreground">（现名 {m.author.currentName}）</span>}
             <span className="text-[11px] text-muted-foreground" title={absoluteTime(m.createdAt)}>
               {fmtTime(m.createdAt)}

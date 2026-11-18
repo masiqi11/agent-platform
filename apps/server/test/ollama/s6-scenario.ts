@@ -137,3 +137,7 @@ try {
   await t.close();
   rmSync(dataDir, { recursive: true, force: true });
 }
+// #8: any failed step fails the run.
+const failedSteps = steps.filter((s) => !s.ok);
+if (failedSteps.length) console.log(`失败：${failedSteps.map((s) => s.step).join("、")}`);
+process.exit(failedSteps.length ? 1 : 0);

@@ -1,4 +1,4 @@
-import { estimateTokens, extractFirstJson, tokenize, parseTextToolCalls, type ParsedToolCall, type ProjectSettings } from "@ap/shared";
+import { estimateTokens, extractFirstJson, tokenize, parseTextToolCalls, stripDsml, type ParsedToolCall, type ProjectSettings } from "@ap/shared";
 import { and, asc, desc, eq, gte, sql } from "drizzle-orm";
 import type { Audit } from "../../core/audit";
 import type { Ctx } from "../../core/context";
@@ -25,7 +25,13 @@ type ModelRow = typeof model.$inferSelect;
  */
 export type ChatMsg =
   | { role: "system" | "user"; content: string }
-  | { role: "assistant"; content: string; toolCalls?: Array<{ id: string; name: string; arguments: Record<string, unknown> }> }
+  | {
+      role: "assistant";
+      content: string;
+      toolCalls?: Array<{ id: string; name: string; arguments: Record<string, unknown> }>;
+      /** Thinking-mode providers (DeepSeek) require the turn's reasoning_content back on the next request. */
+      reasoning?: string;
+    }
   | { role: "tool"; content: string; toolCallId: string; name: string };
 
 const wrapUntrusted = (body: string) => `<untrusted source="tool">\n${body.replace(/<\/?untrusted/gi, "‹untrusted")}\n</untrusted>`;
@@ -64,8 +70,15 @@ function openAiMessages(messages: ChatMsg[]) {
     m.role === "tool"
       ? { role: "tool", tool_call_id: m.toolCallId, content: wrapUntrusted(m.content) }
       : m.role === "assistant" && m.toolCalls?.length
-        ? { role: "assistant", content: m.content || null, tool_calls: m.toolCalls.map((c) => ({ id: c.id, type: "function", function: { name: c.name, arguments: JSON.stringify(c.arguments) } })) }
-        : { role: m.role, content: m.content },
+        ? {
+            role: "assistant",
+            content: m.content || null,
+            ...(m.reasoning !== undefined ? { reasoning_content: m.reasoning } : {}),
+            tool_calls: m.toolCalls.map((c) => ({ id: c.id, type: "function", function: { name: c.name, arguments: JSON.stringify(c.arguments) } })),
+          }
+        : m.role === "assistant" && m.reasoning !== undefined
+          ? { role: "assistant", content: m.content, reasoning_content: m.reasoning }
+          : { role: m.role, content: m.content },
   );
 }
 
@@ -103,10 +116,14 @@ export interface CompleteInput {
   /** Data classes leaving the box (LLM-11), e.g. ["chat"], ["code"]. */
   dataClasses?: string[];
   onDelta?: (delta: string) => void;
+  /** Internal: this call already retried once after a max_tokens truncation. */
+  retriedTruncated?: boolean;
 }
 export interface CompleteResult {
   content: string;
   toolCalls: ParsedToolCall[];
+  /** Provider reasoning to keep in the agent's tool history (DeepSeek thinking mode). */
+  reasoning?: string;
   toolMode: "native" | "text" | "none";
   json?: unknown;
   valid: boolean;
@@ -147,9 +164,26 @@ export class LlmUnavailable extends DomainError {
 interface RawReply {
   content: string;
   toolCalls: ParsedToolCall[];
+  /** finish_reason "length": the reply hit max_tokens. */
+  truncated?: boolean;
+  /** Some tool call's arguments were not valid JSON. */
+  badArgs?: boolean;
+  /** reasoning_content of thinking-mode providers; passed back with the tool history. */
+  reasoning?: string;
   tokensIn?: number;
   tokensOut?: number;
 }
+
+/** Default output budget for tool-using agent turns (dev / reviewer / tester) when the agent sets none. */
+export const AGENT_MAX_TOKENS = 8192;
+/**
+ * Small-window models keep the old 1024 (their context is better spent on history); large-window
+ * models get up to AGENT_MAX_TOKENS, never more than a quarter of the window.
+ */
+export const agentMaxTokens = (contextWindow: number | null | undefined) => {
+  const cw = contextWindow ?? 8192;
+  return cw < 32_768 ? 1024 : Math.min(AGENT_MAX_TOKENS, Math.floor(cw / 4));
+};
 
 /** Vector column dimension (§8.7): other dimensions need a new index version, not supported in place. */
 export const EMBED_DIM = 768;
@@ -616,10 +650,16 @@ export function createLlm(d: { config: Config; db: Database; audit: Audit; event
       const partial = new Map<string, { name: string; args: string }>();
       const openAt = new Map<number, string>();
       let refused = false;
+      let truncated = false;
       const take = (j: Record<string, unknown>, delta: boolean) => {
         const ch = ((j.choices as unknown[]) ?? [])[0] as Record<string, unknown> | undefined;
         if (ch?.finish_reason === "content_filter") refused = true;
-        const msg = (delta ? ch?.delta : ch?.message) as { content?: string; tool_calls?: Array<{ index?: number; id?: string; function?: { name?: string; arguments?: string } }> } | undefined;
+        if (ch?.finish_reason === "length") truncated = true;
+        const msg = (delta ? ch?.delta : ch?.message) as
+          | { content?: string; reasoning_content?: string; tool_calls?: Array<{ index?: number; id?: string; function?: { name?: string; arguments?: string } }> }
+          | undefined;
+        // Present (even empty) means thinking mode: the field must go back with the tool history.
+        if (typeof msg?.reasoning_content === "string") out.reasoning = (out.reasoning ?? "") + msg.reasoning_content;
         if (msg?.content) {
           out.content += msg.content;
           if (delta) req.onDelta?.(msg.content);
@@ -662,17 +702,26 @@ export function createLlm(d: { config: Config; db: Database; audit: Audit; event
           args = JSON.parse(pc.args || "{}") as Record<string, unknown>;
         } catch {
           // Malformed args → empty; tool validation rejects the call and the caller's fallback applies.
-          log.warn("llm.tool_args_malformed", { model: m.name, tool: pc.name, length: pc.args.length, stream });
+          log.warn("llm.tool_args_malformed", { model: m.name, tool: pc.name, length: pc.args.length, stream, truncated });
           if (stream) malformedStream = true;
+          out.badArgs = true;
         }
         if (pc.name) out.toolCalls.push({ name: pc.name, arguments: args });
       }
+      if (truncated) out.truncated = true;
       return out;
     });
     // Some gateways mislabel parallel tool-call fragments when streaming (all arguments under one
     // index, interleaved), which no client can reassemble. The same request without streaming is
     // correct there, so retry once that way; the streamed text was only a live preview.
     if (malformedStream) return callOpenAi(m, p, key, { ...req, onDelta: undefined });
+    // Cut off by max_tokens before producing anything usable (a thinking model can spend the whole
+    // budget on reasoning — seen live with deepseek-flash at 1024): retry once with a larger budget,
+    // instead of reading an empty reply as "the model is done".
+    const budget = req.modelPolicy?.maxTokens ?? 1024;
+    // Same when the cut-off landed inside a tool call's arguments (S8-7: submit_review at 1024).
+    if (reply.truncated && ((!reply.content.trim() && !reply.toolCalls.length) || reply.badArgs) && !req.retriedTruncated && budget < 32_768)
+      return callOpenAi(m, p, key, { ...req, onDelta: undefined, retriedTruncated: true, modelPolicy: { ...req.modelPolicy, maxTokens: Math.min(budget * 4, 32_768) } });
     return reply;
   }
 
@@ -792,7 +841,8 @@ export function createLlm(d: { config: Config; db: Database; audit: Audit; event
           toolCalls = parseTextToolCalls(a.r.content);
           if (toolCalls.length) toolMode = "text";
         }
-        let content = a.r.content;
+        // A provider's own tool-call markup left in the text is never shown to people (S8-7, DeepSeek).
+        let content = stripDsml(a.r.content);
         let json: unknown;
         let valid = true;
         let repaired = false;
@@ -836,7 +886,22 @@ export function createLlm(d: { config: Config; db: Database; audit: Audit; event
             d.config.llmRecordFile,
             `${JSON.stringify({ purpose: input.purpose, model: m.name, tools: (input.tools ?? []).map((x) => x.name), content: redactValue(content), toolCalls: JSON.parse(redactValue(JSON.stringify(toolCalls))) })}\n`,
           );
-        return { content, toolCalls, toolMode, json, valid, repaired, model: m.name, providerId: p.id, tokensIn: tin, tokensOut: tout, cost, latencyMs, usedFallback: Boolean(prev) };
+        return {
+          content,
+          toolCalls,
+          toolMode,
+          json,
+          valid,
+          repaired,
+          model: m.name,
+          providerId: p.id,
+          tokensIn: tin,
+          tokensOut: tout,
+          cost,
+          latencyMs,
+          usedFallback: Boolean(prev),
+          ...(a.r.reasoning !== undefined ? { reasoning: a.r.reasoning } : {}),
+        };
       } catch (e) {
         if (e instanceof BudgetExceeded) throw e;
         reasons.push(`${m.name}: ${(e as Error).message}`);

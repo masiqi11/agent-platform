@@ -1,0 +1,47 @@
+{
+  "type": "diff",
+  "version": "9",
+  "dialect": "postgres",
+  "id": "3a80422f-376d-439d-82dd-3f2e28594dbb",
+  "prevIds": [
+    "51b8cbd9-5e8c-4db3-bed1-a0c92eed787b"
+  ],
+  "footprints": [
+    {
+      "statementType": "add_column",
+      "statementTarget": [
+        "column",
+        "public",
+        "job",
+        "lease_token"
+      ],
+      "writes": [
+        "s|col|public.job.lease_token",
+        "n|col|public.job.lease_token",
+        "e|col|public.job.lease_token"
+      ],
+      "reads": [
+        "n|tbl|public.job",
+        "n|sch|public"
+      ]
+    }
+  ],
+  "deltas": [
+    {
+      "op": "create",
+      "row": {
+        "schema": "public",
+        "table": "job",
+        "name": "lease_token",
+        "type": "text",
+        "typeSchema": null,
+        "notNull": false,
+        "dimensions": 0,
+        "default": null,
+        "generated": null,
+        "identity": null,
+        "entityType": "columns"
+      }
+    }
+  ]
+}

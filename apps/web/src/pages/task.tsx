@@ -13,7 +13,7 @@ import { Button } from "@/components/ui/button";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Textarea } from "@/components/ui/textarea";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
-import { api, unwrap } from "@/lib/api";
+import { ApiError, api, unwrap } from "@/lib/api";
 import { useAgents } from "@/lib/projects";
 import { qk, queryClient } from "@/lib/query";
 import { STATUS_LABEL, tk, useTask, type TaskDetail, type TaskStatus } from "@/lib/tasks";
@@ -165,11 +165,21 @@ export function TaskPage({ projectId, taskId }: { projectId: string; taskId: str
 function Criteria({ task: t }: { task: TaskDetail }) {
   const editable = t.status !== "done" && t.status !== "cancelled";
   async function setVerdict(id: string, verdict: "met" | "unmet" | "na") {
-    try {
-      await unwrap(
-        api.api.v1.tasks({ id: t.id }).patch({ acceptanceCriteria: t.acceptanceCriteria.map((c) => (c.id === id ? { ...c, verdict } : c)) }, { headers: { "if-match": String(t.version) } }),
+    const save = (cur: TaskDetail) =>
+      unwrap(
+        api.api.v1.tasks({ id: cur.id }).patch({ acceptanceCriteria: cur.acceptanceCriteria.map((c) => (c.id === id ? { ...c, verdict } : c)) }, { headers: { "if-match": String(cur.version) } }),
       );
-      void queryClient.invalidateQueries({ queryKey: tk.task(t.id) });
+    try {
+      // Always the newest cached version; a 409 (someone or something else changed the task) refetches and retries once.
+      const cur = queryClient.getQueryData<TaskDetail>(tk.task(t.id)) ?? t;
+      try {
+        await save(cur);
+      } catch (e) {
+        if (!(e instanceof ApiError && e.status === 409)) throw e;
+        await queryClient.invalidateQueries({ queryKey: tk.task(t.id) });
+        await save(queryClient.getQueryData<TaskDetail>(tk.task(t.id)) ?? t);
+      }
+      await queryClient.invalidateQueries({ queryKey: tk.task(t.id) });
     } catch (e) {
       toast.error(e instanceof Error ? e.message : "保存失败");
     }
@@ -348,9 +358,10 @@ function People({ task: t }: { task: TaskDetail }) {
   const devs = (agents.data ?? []).filter((a) => a.role === "dev" && (a.status === "active" || a.id === t.assignee?.id));
   async function assign(agentId: string | null) {
     try {
-      await unwrap(api.api.v1.tasks({ id: t.id }).patch({ assigneeAgentId: agentId }, { headers: { "if-match": String(t.version) } }));
+      const cur = queryClient.getQueryData<TaskDetail>(tk.task(t.id)) ?? t;
+      await unwrap(api.api.v1.tasks({ id: t.id }).patch({ assigneeAgentId: agentId }, { headers: { "if-match": String(cur.version) } }));
+      await queryClient.invalidateQueries({ queryKey: tk.task(t.id) });
       toast.success(agentId ? "已分配" : "已取消分配");
-      void queryClient.invalidateQueries({ queryKey: tk.task(t.id) });
       void queryClient.invalidateQueries({ queryKey: ["tasks", t.projectId] });
     } catch (e) {
       toast.error(e instanceof Error ? e.message : "分配失败");

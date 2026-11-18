@@ -22,10 +22,11 @@ import {
   Sun,
   Users,
   WifiOff,
+  MessageCircle,
   type LucideIcon,
 } from "lucide-react";
 import { useQuery } from "@tanstack/react-query";
-import { useEffect, useState, type ReactNode } from "react";
+import { lazy, Suspense, useEffect, useState, type ReactNode } from "react";
 import { Avatar, AvatarFallback } from "@/components/ui/avatar";
 import { Button } from "@/components/ui/button";
 import { CommandDialog, CommandEmpty, CommandGroup, CommandInput, CommandItem, CommandList } from "@/components/ui/command";
@@ -128,6 +129,7 @@ function ActiveProject({ id, name, pkey, collapsed, path }: { id: string; name: 
     { to: `/projects/${id}/sessions`, label: "会话" as MsgKey, icon: History, raw: true },
     { to: `/projects/${id}/repos`, label: "仓库" as MsgKey, icon: GitFork, raw: true },
     { to: `/projects/${id}/knowledge`, label: "知识库" as MsgKey, icon: BookOpen, raw: true },
+    { to: `/projects/${id}/im`, label: "IM 群" as MsgKey, icon: MessageCircle, raw: true },
   ];
   return (
     <div className="py-0.5">
@@ -234,44 +236,57 @@ function ThemeMenu() {
 
 const TENANT_ROLE: Record<string, string> = { owner: "所有者", admin: "管理员", member: "成员", viewer: "只读", auditor: "审计员" };
 
+const ImIdentityDialog = lazy(() => import("@/pages/im").then((m) => ({ default: m.ImIdentityDialog })));
+
 function UserMenu({ collapsed }: { collapsed: boolean }) {
   const { data: me } = useMe();
   const navigate = useNavigate();
   const initials = (me?.displayName ?? "?").slice(0, 1);
+  const [imOpen, setImOpen] = useState(false);
   return (
-    <DropdownMenu>
-      <DropdownMenuTrigger asChild>
-        <Button variant="ghost" className={cn("h-10 min-w-0 gap-2 px-1.5", !collapsed && "flex-1 justify-start")} aria-label="用户菜单">
-          <Avatar className="size-7">
-            <AvatarFallback className="bg-avatar text-[12px] font-medium text-avatar-foreground">{initials}</AvatarFallback>
-          </Avatar>
-          {!collapsed && (
-            <span className="min-w-0 text-left leading-tight">
-              <span className="block truncate text-sm font-medium">{me?.displayName}</span>
-              <span className="block text-[11px] text-muted-foreground">{TENANT_ROLE[me?.tenantRole ?? ""] ?? ""}</span>
-            </span>
-          )}
-        </Button>
-      </DropdownMenuTrigger>
-      <DropdownMenuContent align="start" side="top" className="w-56">
-        <DropdownMenuLabel>
-          <p className="font-medium">{me?.displayName}</p>
-          <p className="text-xs font-normal text-muted-foreground">{me?.email}</p>
-        </DropdownMenuLabel>
-        <DropdownMenuSeparator />
-        <DropdownMenuItem
-          onClick={async () => {
-            await api.api.v1.auth["sign-out"].post().catch(() => {});
-            session.set(null);
-            realtime.disconnect();
-            queryClient.clear();
-            void navigate({ to: "/login" });
-          }}
-        >
-          <LogOut className="size-4" /> {t("user.signout")}
-        </DropdownMenuItem>
-      </DropdownMenuContent>
-    </DropdownMenu>
+    <>
+      {imOpen && (
+        <Suspense fallback={null}>
+          <ImIdentityDialog onClose={() => setImOpen(false)} />
+        </Suspense>
+      )}
+      <DropdownMenu>
+        <DropdownMenuTrigger asChild>
+          <Button variant="ghost" className={cn("h-10 min-w-0 gap-2 px-1.5", !collapsed && "flex-1 justify-start")} aria-label="用户菜单">
+            <Avatar className="size-7">
+              <AvatarFallback className="bg-avatar text-[12px] font-medium text-avatar-foreground">{initials}</AvatarFallback>
+            </Avatar>
+            {!collapsed && (
+              <span className="min-w-0 text-left leading-tight">
+                <span className="block truncate text-sm font-medium">{me?.displayName}</span>
+                <span className="block text-[11px] text-muted-foreground">{TENANT_ROLE[me?.tenantRole ?? ""] ?? ""}</span>
+              </span>
+            )}
+          </Button>
+        </DropdownMenuTrigger>
+        <DropdownMenuContent align="start" side="top" className="w-56">
+          <DropdownMenuLabel>
+            <p className="font-medium">{me?.displayName}</p>
+            <p className="text-xs font-normal text-muted-foreground">{me?.email}</p>
+          </DropdownMenuLabel>
+          <DropdownMenuSeparator />
+          <DropdownMenuItem onClick={() => setImOpen(true)}>
+            <MessageCircle className="size-4" /> IM 身份
+          </DropdownMenuItem>
+          <DropdownMenuItem
+            onClick={async () => {
+              await api.api.v1.auth["sign-out"].post().catch(() => {});
+              session.set(null);
+              realtime.disconnect();
+              queryClient.clear();
+              void navigate({ to: "/login" });
+            }}
+          >
+            <LogOut className="size-4" /> {t("user.signout")}
+          </DropdownMenuItem>
+        </DropdownMenuContent>
+      </DropdownMenu>
+    </>
   );
 }
 

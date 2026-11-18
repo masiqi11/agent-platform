@@ -23,7 +23,11 @@ jobs:
       # §14.5 dependency audit: fails the build on known vulnerabilities in locked dependencies.
       - name: test main-review monitor
         run: node --test scripts/review/*.test.mjs
-      - run: bun audit
+      # GHSA-fc5q-39xc-vjpf (picomatch <=4.0.7, ReDoS via crafted extglobs) has no fixed release yet
+      # (latest is 4.0.7). picomatch is reached only through vite -> tinyglobby at BUILD time with the
+      # project's own fixed glob patterns — never in the server, never with user input. Ignored on the
+      # maintainer's decision (PR #14); remove the --ignore as soon as a fixed picomatch is published.
+      - run: bun audit --ignore GHSA-fc5q-39xc-vjpf
       - run: bun run typecheck
       - run: bun run lint
       - run: bun run format:check

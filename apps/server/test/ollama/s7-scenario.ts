@@ -85,3 +85,7 @@ try {
   await t.close();
   rmSync(dataDir, { recursive: true, force: true });
 }
+// #8: any failed question fails the run.
+const failedRows = rows.filter((r) => !r.ok);
+if (failedRows.length) console.log(`失败：${failedRows.map((r) => String(r.question)).join("、")}`);
+process.exit(failedRows.length ? 1 : 0);

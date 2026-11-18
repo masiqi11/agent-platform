@@ -1,0 +1,303 @@
+{
+  "type": "diff",
+  "version": "9",
+  "dialect": "postgres",
+  "id": "51b8cbd9-5e8c-4db3-bed1-a0c92eed787b",
+  "prevIds": [
+    "cace06b5-a6e0-452c-bbea-69970d5443d9"
+  ],
+  "footprints": [
+    {
+      "statementType": "add_column",
+      "statementTarget": [
+        "column",
+        "public",
+        "binding",
+        "chat_title"
+      ],
+      "writes": [
+        "s|col|public.binding.chat_title",
+        "n|col|public.binding.chat_title",
+        "e|col|public.binding.chat_title"
+      ],
+      "reads": [
+        "n|tbl|public.binding",
+        "n|sch|public"
+      ]
+    },
+    {
+      "statementType": "add_column",
+      "statementTarget": [
+        "column",
+        "public",
+        "binding",
+        "settings"
+      ],
+      "writes": [
+        "s|col|public.binding.settings",
+        "n|col|public.binding.settings",
+        "e|col|public.binding.settings"
+      ],
+      "reads": [
+        "n|tbl|public.binding",
+        "n|sch|public"
+      ]
+    },
+    {
+      "statementType": "add_column",
+      "statementTarget": [
+        "column",
+        "public",
+        "binding",
+        "invalid_reason"
+      ],
+      "writes": [
+        "s|col|public.binding.invalid_reason",
+        "n|col|public.binding.invalid_reason",
+        "e|col|public.binding.invalid_reason"
+      ],
+      "reads": [
+        "n|tbl|public.binding",
+        "n|sch|public"
+      ]
+    },
+    {
+      "statementType": "add_column",
+      "statementTarget": [
+        "column",
+        "public",
+        "binding",
+        "invalidated_at"
+      ],
+      "writes": [
+        "s|col|public.binding.invalidated_at",
+        "n|col|public.binding.invalidated_at",
+        "e|col|public.binding.invalidated_at"
+      ],
+      "reads": [
+        "n|tbl|public.binding",
+        "n|sch|public"
+      ]
+    },
+    {
+      "statementType": "add_column",
+      "statementTarget": [
+        "column",
+        "public",
+        "binding",
+        "updated_at"
+      ],
+      "writes": [
+        "s|col|public.binding.updated_at",
+        "n|col|public.binding.updated_at",
+        "e|col|public.binding.updated_at"
+      ],
+      "reads": [
+        "n|tbl|public.binding",
+        "n|sch|public"
+      ]
+    },
+    {
+      "statementType": "add_column",
+      "statementTarget": [
+        "column",
+        "public",
+        "outbound_delivery",
+        "external_message_id"
+      ],
+      "writes": [
+        "s|col|public.outbound_delivery.external_message_id",
+        "n|col|public.outbound_delivery.external_message_id",
+        "e|col|public.outbound_delivery.external_message_id"
+      ],
+      "reads": [
+        "n|tbl|public.outbound_delivery",
+        "n|sch|public"
+      ]
+    },
+    {
+      "statementType": "add_column",
+      "statementTarget": [
+        "column",
+        "public",
+        "outbound_delivery",
+        "sent_at"
+      ],
+      "writes": [
+        "s|col|public.outbound_delivery.sent_at",
+        "n|col|public.outbound_delivery.sent_at",
+        "e|col|public.outbound_delivery.sent_at"
+      ],
+      "reads": [
+        "n|tbl|public.outbound_delivery",
+        "n|sch|public"
+      ]
+    },
+    {
+      "statementType": "create_index",
+      "statementTarget": [
+        "index",
+        "public",
+        "outbound_delivery",
+        "outbound_delivery_binding_message_uq"
+      ],
+      "writes": [
+        "s|idx|public.outbound_delivery_binding_message_uq",
+        "n|idx|public.outbound_delivery_binding_message_uq",
+        "e|idx|public.outbound_delivery_binding_message_uq",
+        "n|rel|public.outbound_delivery_binding_message_uq"
+      ],
+      "reads": [
+        "n|tbl|public.outbound_delivery",
+        "n|sch|public",
+        "n|col|public.outbound_delivery.binding_id",
+        "n|col|public.outbound_delivery.message_id"
+      ]
+    }
+  ],
+  "deltas": [
+    {
+      "op": "create",
+      "row": {
+        "schema": "public",
+        "table": "binding",
+        "name": "chat_title",
+        "type": "text",
+        "typeSchema": null,
+        "notNull": false,
+        "dimensions": 0,
+        "default": null,
+        "generated": null,
+        "identity": null,
+        "entityType": "columns"
+      }
+    },
+    {
+      "op": "create",
+      "row": {
+        "schema": "public",
+        "table": "binding",
+        "name": "settings",
+        "type": "jsonb",
+        "typeSchema": null,
+        "notNull": true,
+        "dimensions": 0,
+        "default": "'{}'",
+        "generated": null,
+        "identity": null,
+        "entityType": "columns"
+      }
+    },
+    {
+      "op": "create",
+      "row": {
+        "schema": "public",
+        "table": "binding",
+        "name": "invalid_reason",
+        "type": "text",
+        "typeSchema": null,
+        "notNull": false,
+        "dimensions": 0,
+        "default": null,
+        "generated": null,
+        "identity": null,
+        "entityType": "columns"
+      }
+    },
+    {
+      "op": "create",
+      "row": {
+        "schema": "public",
+        "table": "binding",
+        "name": "invalidated_at",
+        "type": "timestamp with time zone",
+        "typeSchema": null,
+        "notNull": false,
+        "dimensions": 0,
+        "default": null,
+        "generated": null,
+        "identity": null,
+        "entityType": "columns"
+      }
+    },
+    {
+      "op": "create",
+      "row": {
+        "schema": "public",
+        "table": "binding",
+        "name": "updated_at",
+        "type": "timestamp with time zone",
+        "typeSchema": null,
+        "notNull": true,
+        "dimensions": 0,
+        "default": "now()",
+        "generated": null,
+        "identity": null,
+        "entityType": "columns"
+      }
+    },
+    {
+      "op": "create",
+      "row": {
+        "schema": "public",
+        "table": "outbound_delivery",
+        "name": "external_message_id",
+        "type": "text",
+        "typeSchema": null,
+        "notNull": false,
+        "dimensions": 0,
+        "default": null,
+        "generated": null,
+        "identity": null,
+        "entityType": "columns"
+      }
+    },
+    {
+      "op": "create",
+      "row": {
+        "schema": "public",
+        "table": "outbound_delivery",
+        "name": "sent_at",
+        "type": "timestamp with time zone",
+        "typeSchema": null,
+        "notNull": false,
+        "dimensions": 0,
+        "default": null,
+        "generated": null,
+        "identity": null,
+        "entityType": "columns"
+      }
+    },
+    {
+      "op": "create",
+      "row": {
+        "schema": "public",
+        "table": "outbound_delivery",
+        "name": "outbound_delivery_binding_message_uq",
+        "nameExplicit": true,
+        "columns": [
+          {
+            "value": "binding_id",
+            "isExpression": false,
+            "asc": true,
+            "nullsFirst": false,
+            "opclass": null
+          },
+          {
+            "value": "message_id",
+            "isExpression": false,
+            "asc": true,
+            "nullsFirst": false,
+            "opclass": null
+          }
+        ],
+        "isUnique": true,
+        "where": null,
+        "with": "",
+        "method": "btree",
+        "concurrently": false,
+        "entityType": "indexes"
+      }
+    }
+  ]
+}

@@ -1,6 +1,7 @@
 import pg from "pg";
 import type { Services } from "./services";
 import { log } from "./core/logger";
+import { createStreamHolder } from "./modules/im/stream";
 
 /**
  * Worker loop: event consumers + job queue + cron (§7.1, §11). Modules register their
@@ -88,6 +89,25 @@ export async function startWorker(s: Services, opts: { registerAll?: (s: Service
     }
   });
   loop("recover", 15_000, () => s.jobs.recoverExpired());
+  // FR-IM-01: one instance holds the DingTalk Stream (lease = advisory lock); inbound becomes jobs.
+  const dt = s.dingtalk;
+  const stream = dt
+    ? createStreamHolder({
+        databaseUrl: s.config.databaseUrl,
+        name: "dingtalk",
+        run: (signal, onState) =>
+          dt.runStream(
+            async (ev) => {
+              stream!.touch();
+              await s.im.receive(ev);
+            },
+            signal,
+            onState,
+          ),
+      })
+    : null;
+  stream?.start();
+  s.im.streamStatus = () => stream?.status() ?? null;
   return {
     /**
      * Graceful stop: no new claims, running jobs get up to SHUTDOWN_GRACE_MS to finish, then
@@ -96,6 +116,7 @@ export async function startWorker(s: Services, opts: { registerAll?: (s: Service
     async stop() {
       running = false;
       wake();
+      await stream?.stop();
       await listener?.end().catch(() => undefined);
       listener = null;
       await s.consumers.release().catch(() => {});

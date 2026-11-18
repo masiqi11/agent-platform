@@ -17,6 +17,13 @@ export interface EmitInput {
 
 const MAX_PAYLOAD_STRING = 200;
 
+/**
+ * A short excerpt of free text (reasons) for an event payload. INV-13 keeps payloads to ids and
+ * short labels; the full text lives in the row and the audit log. Found live (S8-7): a failed test's
+ * summary as a transition reason made every submit_test_result throw.
+ */
+export const excerpt = (s: string | null | undefined, n = 120) => (s ? s.replace(/\s+/g, " ").trim().slice(0, n) : null);
+
 /** Guards INV-13 at runtime: no long free text in payloads. */
 function assertIdsOnly(payload: Record<string, unknown>) {
   for (const [k, v] of Object.entries(payload)) {

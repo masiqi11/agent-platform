@@ -43,7 +43,7 @@ function transcript(req: ScriptRequest): Array<{ seq: number; author: string; bo
   return out;
 }
 
-const hasDetail = (t: string) => /\d{2,}|错误|报错|日志|接口|版本|5\d\d|超时率|p9\d|ms|秒|从.*开始|昨天|今天/.test(t) && t.replace(/@\S+/g, "").trim().length >= 18;
+const hasDetail = (t: string) => /\d{2,}|错误|报错|日志|接口|版本|5\d\d|超时率|p9\d|ms|秒|从.*开始|昨天|今天/.test(t) && t.replace(/@(?:"[^"\n]*"|“[^”\n]*”|\S+)/g, "").trim().length >= 18;
 
 /** The "demo" script plays a sensible captain: ask when vague, propose when detailed, summarise on demand. */
 export const demoScript: Script = (req) => {
@@ -102,7 +102,7 @@ export const demoScript: Script = (req) => {
   if (req.purpose === "test.turn") return testerScript(req);
   if (req.purpose === "captain.turn") {
     const t = triggerText(req)
-      .replace(/@\S+\s*/g, "")
+      .replace(/@(?:"[^"\n]*"|“[^”\n]*”|\S+)\s*/g, "")
       .trim();
     const answering = /<answering_question/.test(req.messages.map((m) => m.content).join("\n"));
     const explicit = /(帮我|请|麻烦|需要|查一下|修复|处理|排查|做一个|加一个)/.test(t);

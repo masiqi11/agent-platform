@@ -1,0 +1,89 @@
+{
+  "at": "2026-11-17T16:56:07.847Z",
+  "model": "deepseek-flash",
+  "endpoint": "api.deepseek.com",
+  "rows": [
+    {
+      "kind": "project",
+      "question": "支付回调是怎么验签的？",
+      "ok": true,
+      "by": "deepseek-flash",
+      "confidence": "high",
+      "cited": [
+        "src/callback.ts",
+        "src/callback.ts",
+        "docs/runbook.md"
+      ],
+      "answer": "回调验签由 `verifySignature(body, signature, merchantSecret)` 实现：对原始 body 用与上游约定的商户密钥做 HMAC-SHA256，摘要以 hex 字符串表示，再与传入的 signature 比较；比较前先校验长度一致，然后用 `timingSafeEqual` 做恒定时间比较，避免时序攻击。回调处理流程要求先验签，再按订单号幂等处理。若出现“订单已支付但状态未更新”，运维手册建议检查回调验签与商户密钥是否轮换。",
+      "ms": 5476
+    },
+    {
+      "kind": "project",
+      "question": "退款金额有什么校验规则？",
+      "ok": true,
+      "by": "deepseek-flash",
+      "confidence": "high",
+      "cited": [
+        "src/refund.ts",
+        "src/refund.ts"
+      ],
+      "answer": "退款金额有两条校验规则：1）本次退款金额必须为正数，即 amountCents <= 0 时返回“退款金额必须为正数”；2）累计退款金额不能超过支付金额，即 refundedCents + amountCents > paidCents 时返回“累计退款金额超过支付金额”。校验通过时返回 null。另外退款只适用于已支付订单（接口注释说明）。",
+      "ms": 4296
+    },
+    {
+      "kind": "project",
+      "question": "金额取整用的是什么规则，为什么？",
+      "ok": true,
+      "by": "deepseek-flash",
+      "confidence": "high",
+      "cited": [
+        "src/rounding.ts",
+        "src/rounding.ts"
+      ],
+      "answer": "金额取整使用的是银行家舍入（四舍六入五成双）。代码注释说明这样做的原因是避免对账误差累积；centsToYuan 也调用 bankersRound 后再除以 100。",
+      "ms": 7221
+    },
+    {
+      "kind": "project",
+      "question": "量子纠缠的哈密顿量怎么写",
+      "ok": true,
+      "by": null,
+      "confidence": "low",
+      "cited": [],
+      "answer": "未检索到依据",
+      "ms": 13
+    },
+    {
+      "kind": "global",
+      "question": "超时相关的计费逻辑在哪个仓库哪个文件",
+      "ok": true,
+      "consulted": [
+        "BILL",
+        "PAY"
+      ],
+      "cited": [
+        "BILL:src/payments-client.ts",
+        "BILL:src/payments-client.ts",
+        "BILL:docs/timeouts.md",
+        "BILL:README.md",
+        "PAY:src/gateway.ts",
+        "PAY:src/gateway.ts",
+        "PAY:src/gateway.ts",
+        "PAY:src/orders.ts",
+        "PAY:README.md"
+      ],
+      "answer": "【BILL】超时相关的计费逻辑在 billing 仓库（README 标题即「billing（演示数据）」）的 src/payments-client.ts 文件里：其中定义了单次调用超时常量 PAYMENTS_CALL_TIMEOUT_MS = 3_000（要求小于支付网关的 5s），以及 chargeInvoice 函数——失败/超时最多重试 1 次，仍失败则返回 \"pending\"（账单记为「待支付」）。约定文档在 docs/timeouts.md。\n\n【PAY】片段中没有关于“计费逻辑”的内容，无法回答计费逻辑在哪里。片段里只有超时控制相关代码，位于 payments 仓库的 src/",
+      "ms": 16153
+    }
+  ],
+  "calls": {
+    "total": 15,
+    "ok": 15,
+    "repaired": 0,
+    "purposes": [
+      "kb.judge",
+      "kb.answer"
+    ]
+  },
+  "failures": []
+}
