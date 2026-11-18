@@ -20,6 +20,8 @@ export interface ImReplyHandle {
   /** Short-lived reply endpoint some providers include with each message (DingTalk sessionWebhook). */
   webhook?: string;
   expiresAt?: number;
+  /** The inbound message to reply to, for providers that thread replies (Feishu). */
+  messageId?: string;
 }
 
 export type ImInbound =
@@ -42,7 +44,8 @@ export type ImInbound =
       at?: string;
     }
   | { kind: "edit"; provider: string; msgId: string; chatId: string; senderId: string; text: string }
-  | { kind: "recall"; provider: string; msgId: string; chatId: string; senderId: string }
+  /** byAuthor: the provider guarantees the author recalled it (Feishu sends no operator id). */
+  | { kind: "recall"; provider: string; msgId: string; chatId: string; senderId: string; byAuthor?: boolean }
   /** IM-补3: the bot left / was removed, the chat was disbanded, or the app lost its permission. */
   | { kind: "lifecycle"; provider: string; chatId?: string; event: "bot_removed" | "chat_disbanded" | "app_revoked" };
 
@@ -87,4 +90,4 @@ export class ImThrottled extends Error {
   }
 }
 
-export const IM_PROVIDER_LABEL: Record<string, string> = { dingtalk: "钉钉", mock: "模拟 IM" };
+export const IM_PROVIDER_LABEL: Record<string, string> = { dingtalk: "钉钉", feishu: "飞书", mock: "模拟 IM" };

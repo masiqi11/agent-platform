@@ -32,6 +32,24 @@ const Binding = t.Object({
 /** IM gateway (§10 "IM", §12.3): group bindings and identity mapping. Decisions stay in the Web. */
 export const imRoutes = (s: Services) =>
   new Elysia({ prefix: "/api/v1" })
+    // FR-IM-09 Feishu event subscription. Unauthenticated by design: verified by the app's
+    // Verification Token and (with an Encrypt Key) the X-Lark-Signature over the raw body.
+    // Acknowledged at once; the event becomes an IM inbound job (retries, dead letters, dedupe).
+    .post("/webhooks/feishu", { parse: "none" }, async ({ request, set }) => {
+      if (!s.feishu) {
+        set.status = 404;
+        return { error: "feishu not configured" };
+      }
+      const raw = await request.text();
+      if (raw.length > 1_000_000) {
+        set.status = 413;
+        return { error: "too large" };
+      }
+      const r = await s.feishu.handleCallback(raw, request.headers);
+      if (r.event) await s.im.receive(r.event);
+      set.status = r.status;
+      return r.body;
+    })
     .use(base(s))
     .get("/im/providers", { response: t.Array(t.Object({ provider: t.String(), label: t.String() })) }, async ({ auth }) => {
       await auth();

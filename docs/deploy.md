@@ -178,9 +178,20 @@ server { listen 80; server_name agents.example.com; return 301 https://$host$req
 
 全过程可以在任务详情的「代码 / 证据 / 审批」中查看，也可以在「系统状态 → 链路追踪」中用任务 ID 查出整条链路。
 
-## 10. 接入钉钉（可选）
+## 10. 接入钉钉 / 飞书（可选）
 
-在钉钉开放平台创建企业内部应用并添加机器人，消息接收选择 Stream 模式（不需要公网回调地址）。然后在 `deploy/.env` 中填写 `DINGTALK_CLIENT_ID` / `DINGTALK_CLIENT_SECRET` / `DINGTALK_ROBOT_CODE`，并重启。成员绑定身份、群绑定、命令与真机验证清单见 `im.md`。
+**钉钉**：
+
+1. 在钉钉开放平台创建企业内部应用并添加机器人，消息接收选择 Stream 模式（不需要公网回调地址）。
+2. 在 `deploy/.env` 中填写 `DINGTALK_CLIENT_ID` / `DINGTALK_CLIENT_SECRET` / `DINGTALK_ROBOT_CODE`，然后重启。
+
+**飞书**：
+
+1. 创建企业自建应用并启用机器人能力。
+2. 事件订阅的请求地址填 `https://<域名>/api/v1/webhooks/feishu`，使用飞书时反向代理必须放行这个路径。
+3. 在 `deploy/.env` 中填写 `FEISHU_APP_ID` / `FEISHU_APP_SECRET` / `FEISHU_VERIFICATION_TOKEN` / `FEISHU_ENCRYPT_KEY`，然后重启。
+
+两者可以同时启用。成员绑定身份、群绑定、命令与真机验证清单见 `im.md`。
 
 ## 11. 安装后检查清单
 

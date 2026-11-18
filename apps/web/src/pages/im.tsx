@@ -49,7 +49,7 @@ export function ImPage({ projectId }: { projectId: string }) {
     <div className="space-y-5">
       <PageHeader
         title="IM 群"
-        description="把钉钉群绑定到项目群：群里 @机器人 的消息进入平台，船长回复、任务卡片和摘要同步回群。提议确认与审批只在 Web 进行。"
+        description="把钉钉 / 飞书群绑定到项目群：群里 @机器人 的消息进入平台，船长回复、任务卡片和摘要同步回群。提议确认与审批只在 Web 进行。"
         actions={
           canManage &&
           configured && (
@@ -61,14 +61,14 @@ export function ImPage({ projectId }: { projectId: string }) {
       />
       {!configured && (
         <div className="rounded-xl border border-attention/40 bg-attention-soft/40 px-4 py-3 text-sm" role="status">
-          平台还没有配置 IM 应用。管理员需在部署配置中填写钉钉企业内部应用的 Client ID / Secret（见部署文档「接入钉钉」）。
+          平台还没有配置 IM 应用。管理员需在部署配置中填写钉钉或飞书企业自建应用的凭据（见 docs/im.md）。
         </div>
       )}
       {bindings.data.length === 0 ? (
         <EmptyState
           icon={MessageCircle}
           title="还没有绑定 IM 群"
-          body={`最简单的方式：在钉钉群里 @机器人 发送「/bind ${key}」（需要已绑定身份的 Maintainer）。身份绑定在右下角用户菜单 →「IM 身份」。`}
+          body={`最简单的方式：在钉钉或飞书群里 @机器人 发送「/bind ${key}」（需要已绑定身份的 Maintainer）。身份绑定在右下角用户菜单 →「IM 身份」。`}
         />
       ) : (
         <ul className="space-y-3" data-testid="bindings">
@@ -298,7 +298,8 @@ export function ImIdentityDialog({ onClose }: { onClose(): void }) {
   const providers = useImProviders();
   const mine = useMyIdentities();
   const [code, setCode] = useState<{ code: string; hint: string; expiresAt: string } | null>(null);
-  const provider = providers.data?.[0]?.provider;
+  const [picked, setPicked] = useState<string | null>(null);
+  const provider = picked ?? providers.data?.find((p) => p.provider !== "mock")?.provider ?? providers.data?.[0]?.provider;
   async function generate() {
     if (!provider) return;
     try {
@@ -320,7 +321,7 @@ export function ImIdentityDialog({ onClose }: { onClose(): void }) {
       <DialogContent>
         <DialogHeader>
           <DialogTitle>IM 身份</DialogTitle>
-          <DialogDescription>绑定后，你在钉钉群里的消息会以你的身份进入平台，并按你的权限执行命令。未绑定时显示为“外部成员”，没有任何权限。</DialogDescription>
+          <DialogDescription>绑定后，你在钉钉 / 飞书群里的消息会以你的身份进入平台，并按你的权限执行命令。未绑定时显示为“外部成员”，没有任何权限。</DialogDescription>
         </DialogHeader>
         {!provider ? (
           <p className="text-sm text-muted-foreground">平台还没有配置 IM 应用。</p>
@@ -338,6 +339,25 @@ export function ImIdentityDialog({ onClose }: { onClose(): void }) {
                   </li>
                 ))}
               </ul>
+            )}
+            {(providers.data ?? []).length > 1 && (
+              <div className="flex flex-wrap gap-2" role="radiogroup" aria-label="选择 IM">
+                {(providers.data ?? []).map((p) => (
+                  <Button
+                    key={p.provider}
+                    size="sm"
+                    variant={p.provider === provider ? "default" : "outline"}
+                    role="radio"
+                    aria-checked={p.provider === provider}
+                    onClick={() => {
+                      setPicked(p.provider);
+                      setCode(null);
+                    }}
+                  >
+                    {p.label}
+                  </Button>
+                ))}
+              </div>
             )}
             {code ? (
               <div className="rounded-xl bg-muted/60 px-4 py-3">

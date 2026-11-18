@@ -785,10 +785,13 @@ export function createIm(d: ImDeps, adapters: ImAdapter[] = []) {
       .from(message)
       .where(and(eq(message.source, ev.provider), eq(message.externalId, ev.msgId)));
     if (!m) return "unknown_message";
-    const sender = await resolveSender(m.tenantId, ev.provider, ev.senderId, traceId);
-    const by = sender.mapped ? sender.ctx.actor.principalId : sender.principalId;
-    // Only the IM author's own message: an edit can't re-attribute or touch someone else's.
-    if (by !== m.author && m.author !== (await externalPrincipal(m.tenantId, ev.provider, ev.senderId))) return "not_author";
+    let by = m.author;
+    if (!(ev.kind === "recall" && ev.byAuthor)) {
+      const sender = await resolveSender(m.tenantId, ev.provider, ev.senderId, traceId);
+      by = sender.mapped ? sender.ctx.actor.principalId : sender.principalId;
+      // Only the IM author's own message: an edit can't re-attribute or touch someone else's.
+      if (by !== m.author && m.author !== (await externalPrincipal(m.tenantId, ev.provider, ev.senderId))) return "not_author";
+    }
     const sys = await d.identity.systemCtx(m.tenantId, traceId);
     // Keep the captain address the gateway added on the way in (at_only).
     const rawLead = (m.blocks as { im?: { lead?: unknown } } | null)?.im?.lead;

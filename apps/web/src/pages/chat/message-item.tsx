@@ -14,7 +14,7 @@ import { absoluteTime } from "@/lib/i18n";
 import { cn } from "@/lib/utils";
 import type { Msg } from "./timeline-store";
 
-const SOURCE_LABEL: Record<string, string> = { dingtalk: "钉钉", mock: "模拟 IM" };
+const SOURCE_LABEL: Record<string, string> = { dingtalk: "钉钉", feishu: "飞书", mock: "模拟 IM" };
 
 const CARD: Record<string, { label: string; cls: string }> = {
   summary_card: { label: "摘要", cls: "border-border bg-card" },

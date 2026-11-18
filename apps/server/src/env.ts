@@ -93,6 +93,13 @@ export const serverSchema = {
   DINGTALK_CLIENT_ID: z.string().optional(),
   DINGTALK_CLIENT_SECRET: z.string().optional(),
   DINGTALK_ROBOT_CODE: z.string().optional(),
+  /** Feishu / Lark self-built app (FR-IM-09): event subscription callback /api/v1/webhooks/feishu. */
+  FEISHU_APP_ID: z.string().optional(),
+  FEISHU_APP_SECRET: z.string().optional(),
+  FEISHU_VERIFICATION_TOKEN: z.string().optional(),
+  FEISHU_ENCRYPT_KEY: z.string().optional(),
+  /** https://open.feishu.cn (default) or https://open.larksuite.com for Lark. */
+  FEISHU_DOMAIN: z.string().url().optional(),
   /** Simulated IM (provider "mock") with an inject/inspect API — development, demo and e2e only. */
   IM_MOCK: bool.default(false),
   WORKER_CONCURRENCY: z.coerce.number().int().default(4),
